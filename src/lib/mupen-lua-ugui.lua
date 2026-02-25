@@ -1,5 +1,5 @@
 local ugui = {
-    _VERSION = 'v3.0.3',
+    _VERSION = 'v3.0.2',
     _URL = 'https://github.com/Aurumaker72/mupen-lua-ugui',
     _DESCRIPTION = 'Flexible immediate-mode GUI library for Mupen Lua',
     _LICENSE = 'GPL-3',
@@ -274,36 +274,35 @@ ugui.internal = {
         return res
     end,
 
-    ---Merges two tables deeply, mutating the second table with the first table's values, giving precedence to the first table's values.
-    ---@param a table The override table, whose values take precedence.
-    ---@param b table The source and target table, mutated in-place.
-    ---@return function A function that rolls back all changes made to b.
+    ---Merges two tables deeply, combining their contents while giving precedence to the second table's values.
+    ---@param a table The first table to merge.
+    ---@param b table The second table to merge.
+    ---@return table The merged table.
+    ---@nodiscard
     deep_merge = function(a, b)
-        local rollback_ops = {}
+        local result = {}
 
         local function merge(t1, t2)
+            local merged = {}
             for key, value in pairs(t1) do
                 if type(value) == 'table' and type(t2[key]) == 'table' then
-                    merge(value, t2[key])
+                    merged[key] = merge(value, t2[key])
                 else
-                    local prev = t2[key]
-                    t2[key] = value
-                    local t2_ref = t2
-                    local k = key
-                    rollback_ops[#rollback_ops + 1] = function()
-                        t2_ref[k] = prev
-                    end
+                    merged[key] = value
                 end
             end
-        end
 
-        merge(a, b)
-
-        return function()
-            for i = #rollback_ops, 1, -1 do
-                rollback_ops[i]()
+            for key, value in pairs(t2) do
+                if type(value) == 'table' and type(t1[key]) == 'table' then
+                else
+                    merged[key] = value
+                end
             end
+
+            return merged
         end
+
+        return merge(a, b)
     end,
 
     ---Performs an in-place stable sort on the specified table.
@@ -592,12 +591,13 @@ ugui.internal = {
             return function() end
         end
 
-        -- If there's a styler mixin, we merge it into the control's rendering params.
-        local rollback = ugui.internal.deep_merge(control.styler_mixin, ugui.standard_styler.params)
+        -- If there's a styler mixin, we merge it into the control's rendering params
+        local prev_styler_params = ugui.internal.deep_clone(ugui.standard_styler.params)
+        ugui.standard_styler.params = ugui.internal.deep_merge(ugui.standard_styler.params, control.styler_mixin)
 
-        -- Revert the styler mixin.
+        -- Revert the styler mixin. This is really slow :(
         return function()
-            rollback()
+            ugui.standard_styler.params = prev_styler_params
         end
     end,
 
@@ -1677,7 +1677,26 @@ ugui.standard_styler = {
         end
 
         ugui.standard_styler.draw_raised_frame(control, visual_state)
-        ugui.standard_styler.draw_rich_text(control.rectangle, nil, nil, control.text, ugui.standard_styler.params.button.text[visual_state], visual_state, control.plaintext)
+
+        -- determine if text would overflow and compute a scale factor
+        local scale_factor = 1
+        if control.text and control.rectangle then
+            local size = ugui.standard_styler.compute_rich_text(control.text, control.plaintext).size
+            local available = control.rectangle.width - 4
+            if size.x > available and size.x > 0 then
+                scale_factor = available / size.x
+            end
+        end
+
+        -- temporarily adjust font size if scaling is needed
+        if scale_factor < 1 then
+            local old_font = ugui.standard_styler.params.font_size
+            ugui.standard_styler.params.font_size = old_font * scale_factor
+            ugui.standard_styler.draw_rich_text(control.rectangle, nil, nil, control.text, ugui.standard_styler.params.button.text[visual_state], visual_state, control.plaintext)
+            ugui.standard_styler.params.font_size = old_font
+        else
+            ugui.standard_styler.draw_rich_text(control.rectangle, nil, nil, control.text, ugui.standard_styler.params.button.text[visual_state], visual_state, control.plaintext)
+        end
     end,
 
     ---Draws a ToggleButton with the specified parameters.
