@@ -12,11 +12,21 @@ local __impl = __impl
 local semantic_workflow = dofile(processors_path .. 'SemanticWorkflow.lua')
 
 -- table de conversion action → joypad pour exécution immédiate via clic
--- Note : chaque action a un code unique, les clés en double seraient écrasées
--- par la dernière définition. utiliser les bonnes valeurs tirées de
--- `test/stroop/Config/MarioActions.xml`.
+-- accepte soit un simple tableau de boutons (appui d'une frame), soit un
+-- tableau `pattern` de plusieurs états. un champ `offset` peut être ajouté
+-- afin de positionner la séquence en amont ou en aval de la cellule cliquée.
+-- les valeurs doivent provenir de `test/stroop/Config/MarioActions.xml`.
 local end_action_joypad = {
-    [0x03000888] = { Z = true, A = true }, -- long jump
+    -- long jump : quatre frames, deux Z puis deux A, débutant à la trame
+    -- cliquée.
+    [0x03000888] = {
+        pattern = {
+            { Z = true },
+            { Z = true },
+            { A = true },
+            { A = true },
+        }
+    },
     [0x03000880] = { A = true },            -- single jump
     [0x008008A9] = { Z = true },            -- ground pound
     [0x18008AA] = { Z = true, B = true },   -- slide kick
@@ -85,6 +95,12 @@ local VIEW_MODE_HEADERS <const> = { 'SEMANTIC_WORKFLOW_FRAMELIST_STICK', 'SEMANT
 --#region logic
 
 local scroll_offset = 0
+
+-- Note: semantic_workflow.perform is not implemented in the processor
+-- (it only provides transform/readback). previous versions attempted to
+-- inject immediate overrides via a queue, but editing the sheet directly
+-- now handles long‑jump playback. therefore the queue logic has been
+-- removed entirely.
 
 local UID = UIDProvider.allocate_once('FrameListGui', function(enum_next)
     local base = enum_next(MAX_DISPLAYED_SECTIONS * NUM_UIDS_PER_ROW)
@@ -270,6 +286,53 @@ local function handle_scroll_and_buttons(section_rect, button_draw_data, num_row
 end
 
 ---@param sheet Sheet
+---@param action_code integer
+---@param sheet Sheet? optional sheet to mutate
+---@param sec_index number? section index
+---@param frame_index number? frame index
+local function perform_end_action(action_code, sheet, sec_index, frame_index)
+    local mapping = end_action_joypad[action_code]
+    if not mapping then return end
+    local pattern = mapping.pattern and mapping.pattern or { mapping }
+
+    if sheet and sec_index and frame_index then
+        local sec = sheet.sections[sec_index]
+        if sec then
+            local offs = mapping.offset or 0
+            local targets = {}
+            local min_i, max_i = math.huge, -math.huge
+            for i = 1, #pattern do
+                local idx = frame_index + offs + i - 1
+                targets[i] = idx
+                min_i = math.min(min_i, idx)
+                max_i = math.max(max_i, idx)
+            end
+            if min_i < 1 then
+                local push = 1 - min_i
+                for _ = 1, push do
+                    local tmp = {}
+                    CloneInto(tmp, Joypad.input)
+                    table.insert(sec.inputs, 1, { tas_state = NewTASState(), joy = tmp })
+                end
+                for i = 1, #targets do targets[i] = targets[i] + push end
+                max_i = max_i + push
+            end
+            while #sec.inputs < max_i do
+                local tmp = {}
+                CloneInto(tmp, Joypad.input)
+                table.insert(sec.inputs, { tas_state = NewTASState(), joy = tmp })
+            end
+            for i, joy in ipairs(pattern) do
+                local dest = sec.inputs[targets[i]].joy
+                for k, v in pairs(joy) do dest[k] = v end
+            end
+            sheet:run_to_preview()
+        end
+    end
+    -- we no longer send overrides; pattern entries are written into the
+    -- sheet itself above.
+end
+
 local function draw_sections_gui(sheet, draw, view_index, section_rect, button_draw_data)
     local function span(x1, x2, height)
         local r = grid_rect(x1, 0, x2 - x1, height, 0)
@@ -323,7 +386,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             ugui.joystick({
                 uid = uid_base + 1,
                 rectangle = span(COL1, COL2, FRAME_COLUMN_HEIGHT),
-                position = { x = input.joy.X, y = -input.joy.Y },
+                position = { x = (input.joy and input.joy.X) or 0, y = -((input.joy and input.joy.Y) or 0) },
                 styler_mixin = {
                     joystick = {
                         tip_size = 4 * Drawing.scale,
@@ -368,11 +431,8 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 -- on the cell should also fire the semantic action if we know
                 -- a mapping for it.
                 if view_index == 2 then
-                    local action_code = section.end_action
-                    local joy = end_action_joypad[action_code]
-                    if joy then
-                        semantic_workflow.perform({ is_end = true, joypad = joy })
-                    end
+                    local sheet = SemanticWorkflowProject:asserted_current()
+                    perform_end_action(section.end_action, sheet, section_index, input_sub_index)
                 end
 
                 if __impl.special_select_handler then
@@ -415,6 +475,7 @@ end
 --#endregion
 
 function __impl.render(draw)
+    -- no override queue to drain
     local current_sheet = SemanticWorkflowProject:asserted_current()
 
     local num_rows = iterate_input_rows(SemanticWorkflowProject:asserted_current(), nil)

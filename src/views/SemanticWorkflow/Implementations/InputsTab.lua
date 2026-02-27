@@ -214,19 +214,59 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
 
                     -- if an input is currently being edited, apply the corresponding
                     -- button pattern so that the row shows a press immediately.
-                    if edited_input then
-                        if action == 0x03000888 then
-                            -- long jump: set A on current input and Z on the previous one
-                            edited_input.joy = { A = true }
-                            local sheet = SemanticWorkflowProject:asserted_current()
-                            local frame_idx = sheet.active_frame.frame_index
-                            if frame_idx and frame_idx > 1 then
-                                local prev = section.inputs[frame_idx - 1]
-                                if prev then prev.joy = { Z = true } end
+                    -- apply button pattern into the section inputs. regardless of
+                    -- whether a specific row is being edited, always append the
+                    -- long‑jump sequence at the end of the section when that
+                    -- action is selected; this guarantees the four frames appear.
+                    if action == 0x03000888 then
+                        print('InputsTab: inserting long jump pattern into section')
+                        local pattern = {
+                            { Z = true },
+                            { Z = true },
+                            { A = true },
+                            { A = true },
+                        }
+
+                        -- determine insertion point: prefer the currently edited frame,
+                        -- otherwise the sheet's active_frame, fall back to end.
+                        local sheet = SemanticWorkflowProject:asserted_current()
+                        local start_idx = nil
+                        if edited_input then
+                            -- find edited_input's index
+                            for i,v in ipairs(section.inputs) do
+                                if v == edited_input then
+                                    start_idx = i
+                                    break
+                                end
                             end
-                        elseif END_ACTION_JOYMAP[action] then
-                            edited_input.joy = ugui.internal.deep_clone(END_ACTION_JOYMAP[action])
                         end
+                        if not start_idx and sheet and sheet.active_frame then
+                            local sec = sheet.sections[sheet.active_frame.section_index]
+                            if sec == section then
+                                start_idx = sheet.active_frame.frame_index
+                            end
+                        end
+                        start_idx = start_idx or (#section.inputs + 1)
+                        print('  inserting at index', start_idx)
+
+                        -- insert pattern starting at start_idx
+                        for i, joy in ipairs(pattern) do
+                            local idx = start_idx + i - 1
+                            while #section.inputs < idx do
+                                local tmp = {}
+                                CloneInto(tmp, Joypad.input)
+                                table.insert(section.inputs, { tas_state = NewTASState(), joy = tmp })
+                            end
+                            section.inputs[idx].joy = ugui.internal.deep_clone(joy)
+                        end
+                        -- debug: dump resulting joy states
+                        print('Resulting section inputs:')
+                        for i,v in ipairs(section.inputs) do
+                            print(i, v.joy.A and 'A' or '-', v.joy.Z and 'Z' or '-', v.joy.X or 0, v.joy.Y or 0)
+                        end
+
+                    elseif edited_input and END_ACTION_JOYMAP[action] then
+                        edited_input.joy = ugui.internal.deep_clone(END_ACTION_JOYMAP[action])
                     end
                 end
 
