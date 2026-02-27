@@ -8,6 +8,25 @@
 ---@diagnostic disable-next-line: assign-type-mismatch
 local __impl = __impl
 
+---@type SemanticWorkflow
+local semantic_workflow = dofile(processors_path .. 'SemanticWorkflow.lua')
+
+-- table de conversion action → joypad pour exécution immédiate via clic
+-- Note : chaque action a un code unique, les clés en double seraient écrasées
+-- par la dernière définition. utiliser les bonnes valeurs tirées de
+-- `test/stroop/Config/MarioActions.xml`.
+local end_action_joypad = {
+    [0x03000888] = { Z = true, A = true }, -- long jump
+    [0x03000880] = { A = true },            -- single jump
+    [0x008008A9] = { Z = true },            -- ground pound
+    [0x18008AA] = { Z = true, B = true },   -- slide kick
+    [0x0188088A] = { B = true },            -- air dive
+    [0x00880456] = { A = true, B = true },  -- ground dive
+    [0x18008AC] = { A = true, B = true },   -- air kick
+
+    -- autres mappings ajoutables ici
+}
+
 --#region Constants
 
 local MODE_TEXTS <const> = { '-', 'D', 'M', 'Y', 'R', 'A' }
@@ -345,6 +364,17 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
         if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_frame_box) then
             if ugui.internal.is_mouse_just_down() then
+                -- when we are in the "end action" view (view_index==2), a click
+                -- on the cell should also fire the semantic action if we know
+                -- a mapping for it.
+                if view_index == 2 then
+                    local action_code = section.end_action
+                    local joy = end_action_joypad[action_code]
+                    if joy then
+                        semantic_workflow.perform({ is_end = true, joypad = joy })
+                    end
+                end
+
                 if __impl.special_select_handler then
                     __impl.special_select_handler({ section_index = section_index, frame_index = input_sub_index })
                 else

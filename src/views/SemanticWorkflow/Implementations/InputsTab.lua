@@ -159,7 +159,24 @@ end
 
 local end_action_search_text = nil
 
-local function controls_for_end_action(section, draw, column, top)
+-- mapping used when the end-action control should auto‑fill a button press
+-- on the currently selected input. kept small to avoid duplication with
+-- FrameListGui; expand if more actions need propagation.
+-- common one‑frame mappings; long jump needs special handling because
+-- it is executed across two inputs (hold Z then press A).  The UI will
+-- set the previous frame’s Z and the current frame’s A when an end action
+-- of long jump is chosen.
+local END_ACTION_JOYMAP = {
+    [0x03000880] = { A = true },            -- single jump
+    [0x008008A9] = { Z = true },            -- ground pound
+    [0x18008AA] = { Z = true, B = true },   -- slide kick
+    [0x0188088A] = { B = true },            -- air dive
+    [0x00880456] = { A = true, B = true },  -- ground dive
+    [0x18008AC] = { A = true, B = true },   -- air kick
+}
+
+local function controls_for_end_action(section, edited_input, draw, column, top)
+    local changed = false
     draw:text(grid_rect(column, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
     if end_action_search_text == nil then
         -- end action "dropdown" is not visible
@@ -193,7 +210,24 @@ local function controls_for_end_action(section, draw, column, top)
                     }) then
                     end_action_search_text = nil
                     section.end_action = action
-                    any_changes = true
+                    changed = true
+
+                    -- if an input is currently being edited, apply the corresponding
+                    -- button pattern so that the row shows a press immediately.
+                    if edited_input then
+                        if action == 0x03000888 then
+                            -- long jump: set A on current input and Z on the previous one
+                            edited_input.joy = { A = true }
+                            local sheet = SemanticWorkflowProject:asserted_current()
+                            local frame_idx = sheet.active_frame.frame_index
+                            if frame_idx and frame_idx > 1 then
+                                local prev = section.inputs[frame_idx - 1]
+                                if prev then prev.joy = { Z = true } end
+                            end
+                        elseif END_ACTION_JOYMAP[action] then
+                            edited_input.joy = ugui.internal.deep_clone(END_ACTION_JOYMAP[action])
+                        end
+                    end
                 end
 
                 i = i + 1
@@ -201,6 +235,7 @@ local function controls_for_end_action(section, draw, column, top)
             end
         end
     end
+    return changed
 end
 
 local function section_controls_for_selected(draw, edited_section, edited_input)
@@ -226,7 +261,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     })
     any_changes = any_changes or old_timeout ~= edited_section.timeout
 
-    controls_for_end_action(edited_section, draw, 0, top)
+    any_changes = any_changes or controls_for_end_action(edited_section, edited_input, draw, 0, top)
 
     if any_changes then
         sheet:run_to_preview()
