@@ -381,6 +381,14 @@ end
 ---@param font_name string The font name.
 ---@return Size # The text's bounding box.
 BreitbandGraphics.get_text_size = function(text, font_size, font_name)
+    -- Ensure we pass a string to the underlying API. Some callers have
+    -- accidentally handed in a function or other value (see issue when
+    -- loading presets), which causes d2d.get_text_size to error.
+    if type(text) ~= "string" then
+        -- convert to a string; if it's a function we get something like
+        -- "function: 0x..." which is still safe to measure.
+        text = tostring(text)
+    end
     return d2d.get_text_size(text, font_name, font_size, 99999999, 99999999)
 end
 
@@ -598,6 +606,10 @@ end
 BreitbandGraphics.draw_text2 = function(params)
     if not params.text then
         return
+    end
+
+    if type(params.text) ~= 'string' then
+        params.text = tostring(params.text)
     end
 
     local internal_alignment_to_d2d_alignment_map = {
