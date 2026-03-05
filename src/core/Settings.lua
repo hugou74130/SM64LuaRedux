@@ -85,6 +85,7 @@ Settings = {
         fast_foward = true,
         default_section_timeout = 60,
         recent_projects = {},
+        auto_save = false,
     },
     variables = {
         {

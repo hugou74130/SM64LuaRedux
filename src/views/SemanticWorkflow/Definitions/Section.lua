@@ -10,6 +10,7 @@
 ---@field inputs SectionInputs[] The TAS states and button presses for the earliest frames of this section. If the segment is longer than this array, its last element being held out until the end of this section.
 ---@field collapsed boolean Whether the section's earliest inputs should be hidden in the FrameListGui.
 ---@field label string | nil An optional human-readable label shown in the frame list and section controls.
+---@field color_tag integer | nil Optional color tag index (1-8) for visual organization in the frame list. nil or 0 means no color.
 local cls_section = {}
 
 ---Constructs a new section with a single initial input frame.

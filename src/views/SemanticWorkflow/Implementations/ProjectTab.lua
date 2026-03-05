@@ -348,6 +348,21 @@ function __impl.render(draw)
             if not is_real_sheet then break end
 
             local sheet = SemanticWorkflowProject.all[SemanticWorkflowProject.meta.sheets[i].name]
+
+            -- ── Per-sheet stats overlay (right side of name button) ──────────
+            if sheet and sheet.sections then
+                local sec_count = #sheet.sections
+                local frame_count = 0
+                for _, sec in ipairs(sheet.sections) do
+                    frame_count = frame_count + sec.timeout
+                end
+                draw:small_text(
+                    grid_rect(0, y, 2.9, Gui.MEDIUM_CONTROL_HEIGHT),
+                    'end',
+                    string.format('S:%d F:%d', sec_count, frame_count)
+                )
+            end
+
             local x = 3
 
             local function draw_utility_button(text, tip, enabled, width)

@@ -88,7 +88,19 @@ local BUTTON_COLORS <const> = {
     { background = '#37373764', button = '#323232FF' }, -- 4 DPad Buttons
 }
 
-local VIEW_MODE_HEADERS <const> = { 'SEMANTIC_WORKFLOW_FRAMELIST_STICK', 'SEMANTIC_WORKFLOW_FRAMELIST_UNTIL' }
+local VIEW_MODE_HEADERS <const> = { 'SEMANTIC_WORKFLOW_FRAMELIST_STICK', 'SEMANTIC_WORKFLOW_FRAMELIST_UNTIL', 'SEMANTIC_WORKFLOW_FRAMELIST_NUMERIC' }
+
+-- Palette for section color tags. Index 0 = no color.
+local SECTION_COLOR_PALETTE <const> = {
+    '#FF404088', -- 1 Red/pink
+    '#FF8000AA', -- 2 Orange
+    '#C8C800AA', -- 3 Yellow
+    '#00CC44AA', -- 4 Green
+    '#00CCCCAA', -- 5 Cyan
+    '#4080FFAA', -- 6 Blue
+    '#9040FFAA', -- 7 Purple
+    '#FFFFFFAA', -- 8 White
+}
 
 --#endregion
 
@@ -186,10 +198,47 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
     draw:text(grid_rect(COL0, ROW1, COL1 - COL0, 1), 'start', Locales.str('SEMANTIC_WORKFLOW_FRAMELIST_SECTION'))
     draw:text(grid_rect(COL1, ROW1, COL6 - COL1, 1), 'start', Locales.str(VIEW_MODE_HEADERS[view_index]))
 
-    -- Stats: total sections and total input frames
+    -- Stats: total sections, total frames, estimated duration, dirty marker
     local total_inputs_count = 0
     for _, s in ipairs(sheet.sections) do total_inputs_count = total_inputs_count + #s.inputs end
-    draw:small_text(grid_rect(0, ROW0, 3, 0.5), 'start', 'S:' .. #sheet.sections .. '  F:' .. total_inputs_count)
+    local duration_s = string.format('%.1f', total_inputs_count / 30)
+    local dirty_mark = SemanticWorkflowProject.dirty and ' [*]' or ''
+    draw:small_text(grid_rect(0, ROW0, 3, 0.5), 'start',
+        'S:' .. #sheet.sections .. '  F:' .. total_inputs_count .. ' (~' .. duration_s .. 's)' .. dirty_mark)
+
+    -- Mini timeline: proportional bars showing each section's frame share
+    if total_inputs_count > 0 then
+        local tl_rect = grid_rect(COL0, ROW2 - 0.2, COL_1 - SCROLLBAR_WIDTH, 0.2, 0)
+        local tl_x = tl_rect.x
+        local tl_w = tl_rect.width
+        local tl_y = tl_rect.y
+        local tl_h = tl_rect.height
+        local cur_x = tl_x
+        for si, sec in ipairs(sheet.sections) do
+            local frac = #sec.inputs / total_inputs_count
+            local seg_w = math.max(1, math.floor(tl_w * frac))
+            if si == #sheet.sections then
+                seg_w = tl_x + tl_w - cur_x -- fill remainder
+            end
+            local color = (sec.color_tag and sec.color_tag > 0 and SECTION_COLOR_PALETTE[sec.color_tag]) or
+                (si % 2 == 0 and '#88888866' or '#AAAAAA66')
+            BreitbandGraphics.fill_rectangle({ x = cur_x, y = tl_y, width = seg_w, height = tl_h }, color)
+            cur_x = cur_x + seg_w
+        end
+        -- Highlight the active section in the timeline
+        local active_si = sheet.active_frame.section_index
+        local offset_x = tl_x
+        for si, sec in ipairs(sheet.sections) do
+            local frac = #sec.inputs / total_inputs_count
+            local seg_w = math.max(1, math.floor(tl_w * frac))
+            if si == #sheet.sections then seg_w = tl_x + tl_w - offset_x end
+            if si == active_si then
+                BreitbandGraphics.draw_rectangle({ x = offset_x, y = tl_y, width = seg_w, height = tl_h }, '#FFFFFFFF', 1)
+                break
+            end
+            offset_x = offset_x + seg_w
+        end
+    end
 
     if not button_draw_data then return end
 
@@ -363,6 +412,14 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         return { x = r.x, y = section_rect.y, width = r.width, height = height and r.height or section_rect.height }
     end
 
+    -- Pre-compute cumulative frame offsets per section (frames before each section start)
+    local cum_frames = {}
+    local cum_total = 0
+    for si = 1, #sheet.sections do
+        cum_frames[si] = cum_total
+        cum_total = cum_total + #sheet.sections[si].inputs
+    end
+
     iterate_input_rows(sheet, function(section, input, section_index, total_inputs, input_sub_index)
         if total_inputs <= scroll_offset then return false end
 
@@ -382,7 +439,36 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
         local uid_base = UID.Row(total_inputs - scroll_offset)
 
-        BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
+        -- Active simulation: tint the executing section with a cyan overlay
+        local is_executing = sheet.busy and section_index == sheet._section_index
+        BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = is_executing and 90 or 66 })
+        if is_executing then
+            BreitbandGraphics.fill_rectangle(section_rect, { r = 0, g = 200, b = 180, a = 30 })
+        end
+
+        -- Playback progress bar: thin green bar at the bottom of the executing section row
+        if sheet.busy and section_index == sheet._section_index and input_sub_index == 1 then
+            local progress = math.min(1.0, sheet._frame_counter / math.max(1, math.min(#section.inputs, section.timeout)))
+            BreitbandGraphics.fill_rectangle({
+                x = section_rect.x,
+                y = section_rect.y + section_rect.height - 2,
+                width = section_rect.width * progress,
+                height = 2,
+            }, '#00FF88FF')
+        end
+
+        -- Section color tag: colored 4px bar on left edge for all rows of this section
+        if section.color_tag and section.color_tag > 0 then
+            local color = SECTION_COLOR_PALETTE[section.color_tag]
+            if color then
+                BreitbandGraphics.fill_rectangle({
+                    x = section_rect.x,
+                    y = section_rect.y,
+                    width = 4,
+                    height = section_rect.height,
+                }, color)
+            end
+        end
 
         if input_sub_index == 1 then
             section.collapsed = not ugui.toggle_button({
@@ -396,11 +482,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             }) or #section.inputs == 1;
         end
 
-        if input_sub_index == 1 then
-            draw:text(frame_box, 'end', section_index .. '#' .. #section.inputs .. ':')
-        else
-            draw:text(frame_box, 'end', section_index .. ':')
-        end
+        draw:text(frame_box, 'end', section_index .. ':')
 
         if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
             sheet.preview_frame = { section_index = section_index, frame_index = input_sub_index }
@@ -447,11 +529,31 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 draw:text(span(COL4, COL5), 'end', tostring(tas_state.goal_angle))
                 draw:text(span(COL5, COL6), 'end',
                     tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
+            elseif input_sub_index == 1 then
+                -- show frame count in the unused angle space
+                draw:small_text(span(COL3, COL6), 'end', '×' .. #section.inputs)
             end
         elseif view_index == 2 then
-            -- end action (with optional section label prefix)
+            -- end action with cumulative frame offset and count (first row only)
             local label_prefix = (section.label and section.label ~= '') and (section.label .. ' · ') or ''
-            draw:text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
+            if input_sub_index == 1 then
+                local cum = cum_frames[section_index]
+                local text = string.format('[+%d] %s%s  ×%d', cum, label_prefix, Locales.action(section.end_action), #section.inputs)
+                draw:text(active_frame_box, 'start', text)
+            else
+                draw:text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
+            end
+        elseif view_index == 3 then
+            -- numeric: X/Y and goal angle in compact form
+            local ts = tas_state
+            local mode_char = MODE_TEXTS[ts.movement_mode + 1]
+            local x = (input.joy and input.joy.X) or 0
+            local y = (input.joy and input.joy.Y) or 0
+            local angle_str = ts.movement_mode == MovementModes.match_angle
+                and string.format('A:%d', ts.goal_angle)
+                or string.format('X:%-4d Y:%d', x, y)
+            local text = string.format('%s %s', mode_char, angle_str)
+            draw:small_text(active_frame_box, 'start', text)
         end
 
         if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_frame_box) then
@@ -472,6 +574,16 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             end
         end
 
+        -- Timeout mismatch: right-edge orange strip when timeout < inputs (unreachable frames)
+        if input_sub_index == 1 and section.timeout < #section.inputs then
+            BreitbandGraphics.fill_rectangle({
+                x = section_rect.x + section_rect.width - 3,
+                y = section_rect.y,
+                width = 3,
+                height = section_rect.height,
+            }, '#FF8800DD')
+        end
+
         -- draw buttons
         local unit = Settings.grid_size * Drawing.scale
         local sz = BUTTON_SIZE * unit
@@ -490,11 +602,15 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         end
 
         if section_index == sheet.preview_frame.section_index and sheet.preview_frame.frame_index == input_sub_index then
-            BreitbandGraphics.draw_rectangle(section_rect, '#FF0000FF', 1)
+            -- Preview frame: thick red left bar + outline
+            BreitbandGraphics.fill_rectangle({ x = section_rect.x, y = section_rect.y, width = 3, height = section_rect.height }, '#FF2020FF')
+            BreitbandGraphics.draw_rectangle(section_rect, '#FF2020FF', 1)
         end
 
         if section_index == sheet.active_frame.section_index and sheet.active_frame.frame_index == input_sub_index then
-            BreitbandGraphics.draw_rectangle(section_rect, '#64FF64FF', 1)
+            -- Active (editing) frame: thick green left bar + outline
+            BreitbandGraphics.fill_rectangle({ x = section_rect.x, y = section_rect.y, width = 3, height = section_rect.height }, '#44FF44FF')
+            BreitbandGraphics.draw_rectangle(section_rect, '#44FF44FF', 2)
         end
 
         section_rect.y = section_rect.y + section_rect.height

@@ -69,6 +69,10 @@ end
 local Tabs = dofile(views_path .. 'SemanticWorkflow/Tabs.lua')
 local selected_tab_index = 1
 
+-- Auto-save: save the project after this many idle frames when dirty
+local AUTO_SAVE_DELAY <const> = 90
+local auto_save_frames = 0
+
 local function draw_factory(theme)
     return {
         foreground_color = Drawing.foreground_color(),
@@ -123,6 +127,19 @@ return {
         end
 
         local draw = draw_factory(Styles.theme())
+
+        -- Debounced auto-save: save after AUTO_SAVE_DELAY idle frames when dirty
+        if Settings.semantic_workflow.auto_save and SemanticWorkflowProject.project_location ~= nil then
+            if SemanticWorkflowProject.dirty then
+                auto_save_frames = auto_save_frames + 1
+                if auto_save_frames >= AUTO_SAVE_DELAY then
+                    SemanticWorkflowProject:save()
+                    auto_save_frames = 0
+                end
+            else
+                auto_save_frames = 0
+            end
+        end
 
         -- TODO: redesign which tabs to show when and how
         --       (particularly, 'Preferences' has no reason to be hidden when no project is loaded)
