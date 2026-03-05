@@ -18,6 +18,12 @@ local function new_sheet_meta(name)
     }
 end
 
+local function auto_save(project)
+    if project.project_location ~= nil then
+        project:save()
+    end
+end
+
 function __impl.new()
     return {
         meta = {
@@ -29,6 +35,7 @@ function __impl.new()
         all = {},
         project_location = nil,
         disabled = false,
+        dirty = false,
 
         current = __impl.current,
         asserted_current = __impl.asserted_current,
@@ -38,6 +45,8 @@ function __impl.new()
         save = __impl.save,
         add_sheet = __impl.add_sheet,
         remove_sheet = __impl.remove_sheet,
+        move_sheet = __impl.move_sheet,
+        duplicate_sheet = __impl.duplicate_sheet,
         select = __impl.select,
         rebase = __impl.rebase,
     }
@@ -61,17 +70,45 @@ function __impl:add_sheet()
     local new_sheet = Sheet.new('Sheet ' .. self.meta.created_sheet_count, true)
     self.all[new_sheet.name] = new_sheet
     self.meta.sheets[#self.meta.sheets + 1] = new_sheet_meta(new_sheet.name)
+    self.dirty = true
+    auto_save(self)
 end
 
 function __impl:remove_sheet(index)
     self.all[table.remove(self.meta.sheets, index).name] = nil
     self:select(#self.meta.sheets > 0 and (index % #self.meta.sheets) or 0)
+    self.dirty = true
+    auto_save(self)
 end
 
 function __impl:move_sheet(index, sign)
     local tmp = self.meta.sheets[index]
     self.meta.sheets[index] = self.meta.sheets[index + sign]
     self.meta.sheets[index + sign] = tmp
+    self.dirty = true
+    auto_save(self)
+end
+
+function __impl:duplicate_sheet(from_index, to_index)
+    local source_meta = self.meta.sheets[from_index]
+    local source_sheet = self.all[source_meta.name]
+    local new_name = source_sheet.name .. ' (copy)'
+    local counter = 2
+    while self.all[new_name] ~= nil do
+        new_name = source_sheet.name .. ' (copy ' .. counter .. ')'
+        counter = counter + 1
+    end
+    self.meta.created_sheet_count = self.meta.created_sheet_count + 1
+    local cloned = source_sheet:clone(new_name)
+    self.all[new_name] = cloned
+    local cloned_meta = new_sheet_meta(new_name)
+    if source_meta.base_sheet ~= nil then
+        cloned_meta.base_sheet = source_meta.base_sheet
+        cloned:set_base_sheet(self.all[source_meta.base_sheet])
+    end
+    table.insert(self.meta.sheets, to_index, cloned_meta)
+    self.dirty = true
+    auto_save(self)
 end
 
 function __impl:set_current_name(name)
@@ -84,6 +121,8 @@ function __impl:set_current_name(name)
     self.all[current_sheet_meta.name] = nil
     self.all[name] = sheet
     current_sheet_meta.name = name
+    self.dirty = true
+    auto_save(self)
 end
 
 function __impl:select(index, load_state)
@@ -110,6 +149,7 @@ function __impl:load(file)
     self.project_location = file
     CloneInto(self.meta, json.decode(ReadAll(file)))
     self.all = {}
+    self.dirty = false
     local project_folder = self:project_folder()
     for _, sheet_meta in ipairs(self.meta.sheets) do
         self.all[sheet_meta.name] = Sheet.new(sheet_meta.name, false)
@@ -134,4 +174,5 @@ function __impl:save()
     for _, sheet_meta in ipairs(SemanticWorkflowProject.meta.sheets) do
         SemanticWorkflowProject.all[sheet_meta.name]:save(project_folder .. sheet_meta.name .. '.sws')
     end
+    self.dirty = false
 end

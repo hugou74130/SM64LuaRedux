@@ -4,7 +4,7 @@
 -- SPDX-License-Identifier: GPL-2.0-or-later
 --
 
----@diagnostic disable:missing-return
+---@diagnostic disable:missing-return, unused-local
 
 ---@class Sheet Describes the data required to manage, store and edit the ordered sections of a sheet.
 ---@field public version string The file version of this sheet. See Version.lua for more information.
@@ -54,6 +54,11 @@ function cls_sheet:rebase() end
 ---Sets the sheet after whose preview frame to run this sheet from.
 ---@param base_sheet Sheet The sheet after whose preview frame to start this sheet. Calling this function will disassociate this sheet from its savestate if defined.
 function cls_sheet:set_base_sheet(base_sheet) end
+
+---Creates a deep copy of this sheet with a new name. Shares the same savestate reference and base sheet pointer.
+---@param new_name string The name for the cloned sheet.
+---@return Sheet clone The cloned sheet.
+function cls_sheet:clone(new_name) end
 
 ---Retrieves whether this sheet or any of its ancestors have changes that may change the outcome of [run_to_preview](lua://cls_sheet.run_to_preview).
 function cls_sheet:invalidated() end

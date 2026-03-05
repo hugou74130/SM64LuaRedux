@@ -4,13 +4,14 @@
 -- SPDX-License-Identifier: GPL-2.0-or-later
 --
 
----@diagnostic disable:missing-return
+---@diagnostic disable:missing-return, unused-local
 
 ---@class Project Describes the data required to work with and store multiple sheets.
 ---@field public meta table Metadata about the project that is stored into the semantic workflow project file (*.swp).
 ---@field public all table All semantic workflow sheets as loaded from their respective *.sws files in order.
 ---@field public project_location string The location of the semantic workflow project file (*.swp).
 ---@field public disabled boolean If true, no inputs will be sent to mupen by this project.
+---@field public dirty boolean True when the project has changes that have not yet been saved to disk.
 local cls_project = {}
 
 ---Constructs a new Project with no sheets.
@@ -58,6 +59,11 @@ function cls_project:project_folder() end
 function cls_project:load(file) end
 
 function cls_project:save() end
+
+---Duplicates the sheet at from_index, inserting the copy at to_index.
+---@param from_index number The 1-based index of the sheet to duplicate.
+---@param to_index number The 1-based position at which to insert the copy.
+function cls_project:duplicate_sheet(from_index, to_index) end
 
 __impl = cls_project
 dofile(views_path .. 'SemanticWorkflow/Implementations/Project.lua')

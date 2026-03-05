@@ -33,6 +33,7 @@ function __impl.new(name, create_savestate)
         run_to_preview = __impl.run_to_preview,
         rebase = __impl.rebase,
         set_base_sheet = __impl.set_base_sheet,
+        clone = __impl.clone,
         save = __impl.save,
         load = __impl.load,
         invalidated = __impl.invalidated,
@@ -123,6 +124,7 @@ end
 
 function __impl:run_to_preview(from_base)
     self._invalidated = true
+    if SemanticWorkflowProject then SemanticWorkflowProject.dirty = true end
     if self.busy or #self.sections == 0 then return end
 
     run_to_preview_internal(self, from_base)

@@ -200,9 +200,8 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TYPE_TO_SEARCH_TOOL_TIP'),
         }):lower()
         local i = 0
-        local match_pattern = '^' .. end_action_search_text
         for action, action_name in pairs(Locales.raw().ACTIONS) do
-            if action_name:find(match_pattern) ~= nil then
+            if action_name:find(end_action_search_text, 1, true) ~= nil then
                 if ugui.button({
                         uid = UID.AvailableActions + i,
                         rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
@@ -219,7 +218,6 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
                     -- long‑jump sequence at the end of the section when that
                     -- action is selected; this guarantees the four frames appear.
                     if action == 0x03000888 then
-                        print('InputsTab: inserting long jump pattern into section')
                         local pattern = {
                             { Z = true },
                             { Z = true },
@@ -247,7 +245,6 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
                             end
                         end
                         start_idx = start_idx or (#section.inputs + 1)
-                        print('  inserting at index', start_idx)
 
                         -- insert pattern starting at start_idx
                         for i, joy in ipairs(pattern) do
@@ -258,11 +255,6 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
                                 table.insert(section.inputs, { tas_state = NewTASState(), joy = tmp })
                             end
                             section.inputs[idx].joy = ugui.internal.deep_clone(joy)
-                        end
-                        -- debug: dump resulting joy states
-                        print('Resulting section inputs:')
-                        for i,v in ipairs(section.inputs) do
-                            print(i, v.joy.A and 'A' or '-', v.joy.Z and 'Z' or '-', v.joy.X or 0, v.joy.Y or 0)
                         end
 
                     elseif edited_input and END_ACTION_JOYMAP[action] then

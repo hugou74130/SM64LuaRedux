@@ -10,7 +10,6 @@ function CloneInto(destination, source)
     local changes = {}
     for k, v in pairs(source) do
         if v ~= destination[k] then changes[k] = v end
-        any_changes = any_changes or v ~= destination[k]
         destination[k] = v
     end
     return changes
