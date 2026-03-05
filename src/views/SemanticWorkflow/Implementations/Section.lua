@@ -16,5 +16,6 @@ function __impl.new(end_action, timeout)
         timeout = timeout,
         inputs = { { tas_state = NewTASState(), joy = tmp } },
         collapsed = false,
+        label = nil,
     }
 end

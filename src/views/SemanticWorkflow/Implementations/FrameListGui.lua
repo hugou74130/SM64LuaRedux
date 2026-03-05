@@ -421,8 +421,9 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                     tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
             end
         elseif view_index == 2 then
-            -- end action
-            draw:text(active_frame_box, 'start', Locales.action(section.end_action))
+            -- end action (with optional section label prefix)
+            local label_prefix = (section.label and section.label ~= '') and (section.label .. ' · ') or ''
+            draw:text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
         end
 
         if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_frame_box) then

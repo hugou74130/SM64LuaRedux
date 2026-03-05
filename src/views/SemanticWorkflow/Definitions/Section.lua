@@ -9,6 +9,7 @@
 ---@field timeout integer The maximum number of frames this section goes on for.
 ---@field inputs SectionInputs[] The TAS states and button presses for the earliest frames of this section. If the segment is longer than this array, its last element being held out until the end of this section.
 ---@field collapsed boolean Whether the section's earliest inputs should be hidden in the FrameListGui.
+---@field label string | nil An optional human-readable label shown in the frame list and section controls.
 local cls_section = {}
 
 ---Constructs a new section with a single initial input frame.

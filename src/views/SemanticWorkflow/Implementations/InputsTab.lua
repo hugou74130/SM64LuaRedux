@@ -77,6 +77,21 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         EndAction = enum_next(),
         EndActionTextbox = enum_next(),
         AvailableActions = enum_next(MAX_ACTION_GUESSES),
+        SectionLabel = enum_next(),
+        CollapseAll = enum_next(),
+        ExpandAll = enum_next(),
+
+        -- Structural undo/redo
+        Undo = enum_next(),
+        Redo = enum_next(),
+
+        -- Section automation
+        MoveSectionUp = enum_next(),
+        MoveSectionDown = enum_next(),
+        CopySection = enum_next(),
+        PasteSection = enum_next(),
+        RepeatN = enum_next(2),
+        RepeatInput = enum_next(),
     }
 end)
 
@@ -96,10 +111,11 @@ local function controls_for_insert_and_remove()
     local top = TOP
     if ugui.button({
             uid = UID.InsertInput,
-            rectangle = grid_rect(0, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_INPUT'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_INPUT_TOOL_TIP'),
         }) then
+        sheet:push_undo_state()
         table.insert(edited_section.inputs, sheet.active_frame.frame_index, ugui.internal.deep_clone(edited_input))
         edited_section.collapsed = false
         any_changes = true
@@ -107,21 +123,23 @@ local function controls_for_insert_and_remove()
 
     if ugui.button({
             uid = UID.DeleteInput,
-            rectangle = grid_rect(1.5, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(1, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_INPUT'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_INPUT_TOOL_TIP'),
             is_enabled = #edited_section.inputs > 1,
         }) then
+        sheet:push_undo_state()
         table.remove(edited_section.inputs, sheet.active_frame.frame_index)
         any_changes = true
     end
 
     if ugui.button({
             uid = UID.InsertSection,
-            rectangle = grid_rect(3, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(2, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION_TOOL_TIP'),
         }) then
+        sheet:push_undo_state()
         local new_section = Section.new(0x0C400201, Settings.semantic_workflow.default_section_timeout) -- end action is "idle"
         table.insert(sheet.sections, sheet.active_frame.section_index + 1, new_section)
         any_changes = true
@@ -129,13 +147,34 @@ local function controls_for_insert_and_remove()
 
     if ugui.button({
             uid = UID.DeleteSection,
-            rectangle = grid_rect(4.5, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(3, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION_TOOL_TIP'),
             is_enabled = #sheet.sections > 1,
         }) then
+        sheet:push_undo_state()
         table.remove(sheet.sections, sheet.active_frame.section_index)
         any_changes = true
+    end
+
+    if ugui.button({
+            uid = UID.Undo,
+            rectangle = grid_rect(4, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_UNDO'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_UNDO_TOOL_TIP'),
+            is_enabled = #sheet._undo_stack > 0,
+        }) then
+        sheet:undo()
+    end
+
+    if ugui.button({
+            uid = UID.Redo,
+            rectangle = grid_rect(5, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REDO'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REDO_TOOL_TIP'),
+            is_enabled = #sheet._redo_stack > 0,
+        }) then
+        sheet:redo()
     end
 
     -- ensure a valid selection in all cases
@@ -158,6 +197,8 @@ end
 --#region Section controls
 
 local end_action_search_text = nil
+local clipboard_section = nil  -- section clipboard for copy/paste
+local repeat_count = 1         -- frame repeat count (×N button)
 
 -- mapping used when the end-action control should auto‑fill a button press
 -- on the currently selected input. kept small to avoid duplication with
@@ -296,6 +337,137 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     any_changes = any_changes or controls_for_end_action(edited_section, edited_input, draw, 0, top)
 
     if any_changes then
+        sheet:run_to_preview()
+    end
+
+    -- Collapse All / Expand All (always visible when a section is selected)
+    if ugui.button({
+            uid = UID.CollapseAll,
+            rectangle = grid_rect(6, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_ALL'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_ALL_TOOL_TIP'),
+        }) then
+        for _, section in ipairs(sheet.sections) do
+            if #section.inputs > 1 then section.collapsed = true end
+        end
+        SemanticWorkflowProject.dirty = true
+    end
+
+    if ugui.button({
+            uid = UID.ExpandAll,
+            rectangle = grid_rect(7, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_EXPAND_ALL'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_EXPAND_ALL_TOOL_TIP'),
+        }) then
+        for _, section in ipairs(sheet.sections) do
+            section.collapsed = false
+        end
+        SemanticWorkflowProject.dirty = true
+    end
+
+    -- Section label
+    draw:text(
+        grid_rect(col_timeout, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT, 2, LABEL_HEIGHT),
+        'start',
+        Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_LABEL')
+    )
+    local old_label = edited_section.label or ''
+    local new_label = ugui.textbox({
+        uid = UID.SectionLabel,
+        rectangle = grid_rect(col_timeout, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + LABEL_HEIGHT, 2, Gui.MEDIUM_CONTROL_HEIGHT),
+        text = old_label,
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_LABEL_TOOL_TIP'),
+    })
+    if new_label ~= old_label then
+        edited_section.label = new_label ~= '' and new_label or nil
+        SemanticWorkflowProject.dirty = true
+    end
+
+    -- ── Section automation ────────────────────────────────────────────────
+    -- Two compact rows placed below the label textbox.
+    local section_idx = sheet.active_frame.section_index
+    local auto_row1 = top + 2 * LABEL_HEIGHT + 2 * Gui.MEDIUM_CONTROL_HEIGHT
+    local auto_row2 = auto_row1 + Gui.SMALL_CONTROL_HEIGHT
+
+    -- Row 1: move up/down, copy, paste
+    if ugui.button({
+            uid = UID.MoveSectionUp,
+            rectangle = grid_rect(0, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_UP'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_UP_TOOL_TIP'),
+            is_enabled = section_idx > 1,
+        }) then
+        sheet:push_undo_state()
+        sheet.sections[section_idx], sheet.sections[section_idx - 1] =
+            sheet.sections[section_idx - 1], sheet.sections[section_idx]
+        sheet.active_frame.section_index = section_idx - 1
+        sheet:run_to_preview()
+    end
+
+    if ugui.button({
+            uid = UID.MoveSectionDown,
+            rectangle = grid_rect(1, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_DOWN'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_DOWN_TOOL_TIP'),
+            is_enabled = section_idx < #sheet.sections,
+        }) then
+        sheet:push_undo_state()
+        sheet.sections[section_idx], sheet.sections[section_idx + 1] =
+            sheet.sections[section_idx + 1], sheet.sections[section_idx]
+        sheet.active_frame.section_index = section_idx + 1
+        sheet:run_to_preview()
+    end
+
+    if ugui.button({
+            uid = UID.CopySection,
+            rectangle = grid_rect(2, auto_row1, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_COPY'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_COPY_TOOL_TIP'),
+        }) then
+        clipboard_section = ugui.internal.deep_clone(edited_section)
+    end
+
+    if ugui.button({
+            uid = UID.PasteSection,
+            rectangle = grid_rect(4, auto_row1, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_PASTE'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_PASTE_TOOL_TIP'),
+            is_enabled = clipboard_section ~= nil,
+        }) then
+        if clipboard_section == nil then return end  -- is_enabled already guards this; nil-check for type safety
+        sheet:push_undo_state()
+        table.insert(sheet.sections, section_idx + 1, ugui.internal.deep_clone(clipboard_section))
+        sheet.active_frame.section_index = section_idx + 1
+        sheet:run_to_preview()
+    end
+
+    -- Row 2: frame repeat (×N)
+    draw:text(
+        grid_rect(0, auto_row2, 3, Gui.SMALL_CONTROL_HEIGHT),
+        'start',
+        Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_N')
+    )
+    repeat_count = ugui.numberbox({
+        uid = UID.RepeatN,
+        rectangle = grid_rect(3, auto_row2, 2, Gui.SMALL_CONTROL_HEIGHT),
+        value = repeat_count,
+        places = 3,
+    })
+    if repeat_count < 1 or repeat_count >= 900 then repeat_count = 1 end
+
+    if ugui.button({
+            uid = UID.RepeatInput,
+            rectangle = grid_rect(5, auto_row2, 3, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_INPUT'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_INPUT_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        local frame_idx = sheet.active_frame.frame_index
+        local template = ugui.internal.deep_clone(edited_section.inputs[frame_idx])
+        for i = 1, repeat_count do
+            table.insert(edited_section.inputs, frame_idx + i, ugui.internal.deep_clone(template))
+        end
+        edited_section.collapsed = false
         sheet:run_to_preview()
     end
 end

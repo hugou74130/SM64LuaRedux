@@ -19,6 +19,8 @@
 ---@field private _savestate ByteBuffer | nil The savestate this sheet runs from, if defined. Otherwise [_base_sheet](lua://cls_sheet._base_sheet) must be defined.
 ---@field private _on_preview_frame_reached function | nil A one-time callback to invoke when this sheet has run to its preview frame. Used to chain sheets that are based on top of one another.
 ---@field private _invalidated boolean Whether the sheet has changed since the last time [run_to_preview](lua://cls_sheet.run_to_preview) has been called.
+---@field private _undo_stack table[] Stack of saved states for undo (each entry has sections, active_frame, preview_frame).
+---@field private _redo_stack table[] Stack of saved states for redo.
 local cls_sheet = {}
 
 ---Constructs a new sheet with the given name and a single section.
@@ -62,6 +64,16 @@ function cls_sheet:clone(new_name) end
 
 ---Retrieves whether this sheet or any of its ancestors have changes that may change the outcome of [run_to_preview](lua://cls_sheet.run_to_preview).
 function cls_sheet:invalidated() end
+
+---Pushes the current sections, active_frame, and preview_frame onto the undo stack.
+---Call this before making any structural mutation (insert/delete input or section).
+function cls_sheet:push_undo_state() end
+
+---Reverts sections, active_frame, and preview_frame to the state before the last push_undo_state call.
+function cls_sheet:undo() end
+
+---Re-applies the most recently undone state.
+function cls_sheet:redo() end
 
 __impl = cls_sheet
 dofile(views_path .. 'SemanticWorkflow/Implementations/Sheet.lua')

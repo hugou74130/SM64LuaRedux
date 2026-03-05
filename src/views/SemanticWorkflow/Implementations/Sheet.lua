@@ -29,6 +29,8 @@ function __impl.new(name, create_savestate)
         _rebasing = false,
         _section_index = 1,
         _frame_counter = 1,
+        _undo_stack = {},
+        _redo_stack = {},
         evaluate_frame = __impl.evaluate_frame,
         run_to_preview = __impl.run_to_preview,
         rebase = __impl.rebase,
@@ -37,6 +39,9 @@ function __impl.new(name, create_savestate)
         save = __impl.save,
         load = __impl.load,
         invalidated = __impl.invalidated,
+        push_undo_state = __impl.push_undo_state,
+        undo = __impl.undo,
+        redo = __impl.redo,
     }
     if create_savestate then
         savestate.do_memory('', 'save', function(result, data) new_instance._savestate = data end)
@@ -168,4 +173,52 @@ end
 function __impl:set_base_sheet(sheet)
     self._base_sheet = sheet
     self._savestate = nil
+end
+
+function __impl:clone(new_name)
+    local cloned = __impl.new(new_name, false)
+    cloned.sections = ugui.internal.deep_clone(self.sections)
+    cloned.preview_frame = ugui.internal.deep_clone(self.preview_frame)
+    cloned.active_frame = ugui.internal.deep_clone(self.active_frame)
+    cloned._savestate = self._savestate
+    cloned._base_sheet = self._base_sheet
+    return cloned
+end
+
+function __impl:push_undo_state()
+    self._undo_stack[#self._undo_stack + 1] = {
+        sections = ugui.internal.deep_clone(self.sections),
+        active_frame = ugui.internal.deep_clone(self.active_frame),
+        preview_frame = ugui.internal.deep_clone(self.preview_frame),
+    }
+    if #self._undo_stack > 50 then table.remove(self._undo_stack, 1) end
+    self._redo_stack = {}
+end
+
+function __impl:undo()
+    if #self._undo_stack == 0 then return end
+    self._redo_stack[#self._redo_stack + 1] = {
+        sections = ugui.internal.deep_clone(self.sections),
+        active_frame = ugui.internal.deep_clone(self.active_frame),
+        preview_frame = ugui.internal.deep_clone(self.preview_frame),
+    }
+    local state = table.remove(self._undo_stack)
+    self.sections = state.sections
+    self.active_frame = state.active_frame
+    self.preview_frame = state.preview_frame
+    self:run_to_preview()
+end
+
+function __impl:redo()
+    if #self._redo_stack == 0 then return end
+    self._undo_stack[#self._undo_stack + 1] = {
+        sections = ugui.internal.deep_clone(self.sections),
+        active_frame = ugui.internal.deep_clone(self.active_frame),
+        preview_frame = ugui.internal.deep_clone(self.preview_frame),
+    }
+    local state = table.remove(self._redo_stack)
+    self.sections = state.sections
+    self.active_frame = state.active_frame
+    self.preview_frame = state.preview_frame
+    self:run_to_preview()
 end
