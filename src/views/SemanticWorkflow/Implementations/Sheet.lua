@@ -137,9 +137,16 @@ end
 
 function __impl:save(file)
     self.version = SEMANTIC_WORKFLOW_FILE_VERSION
-    if self._base_sheet == nil then
+
+    -- only write a savestate if we actually have one; the old code assumed
+    -- that a sheet without a base sheet would always have a valid
+    -- _savestate, which isn't true when the sheet was created without
+    -- saving the current state.  attempting to write `nil` triggered the
+    -- error observed on startup.
+    if self._base_sheet == nil and self._savestate ~= nil then
         WriteAll(file .. '.savestate', self._savestate)
     end
+
     WriteAll(
         file,
         json.encode({

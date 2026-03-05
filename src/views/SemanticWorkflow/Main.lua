@@ -23,6 +23,15 @@ function ReadAll(file)
 end
 
 function WriteAll(file, content)
+    -- writing nil to a file causes a runtime error, so guard against it early.
+    if content == nil then
+        -- this shouldn't normally happen; callers should ensure they
+        -- provide a valid string.  log a warning and substitute an empty
+        -- string so that the caller doesn't crash the whole process.
+        print(string.format("[SemanticWorkflow] WriteAll called with nil content for '%s'", tostring(file)))
+        content = ''
+    end
+
     local f = assert(io.open(file, 'wb'))
     f:write(content)
     f:close()

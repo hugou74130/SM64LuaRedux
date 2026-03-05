@@ -168,6 +168,10 @@ end
 function __impl:save()
     self.meta.version = SEMANTIC_WORKFLOW_FILE_VERSION
     local json = json.encode(self.meta)
+    if json == nil then
+        print("[SemanticWorkflow] warning: failed to encode project metadata to JSON; writing empty string")
+        json = ''
+    end
     WriteAll(SemanticWorkflowProject.project_location, json)
 
     local project_folder = SemanticWorkflowProject:project_folder()
