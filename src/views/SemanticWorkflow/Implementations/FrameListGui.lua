@@ -95,6 +95,8 @@ local VIEW_MODE_HEADERS <const> = { 'SEMANTIC_WORKFLOW_FRAMELIST_STICK', 'SEMANT
 --#region logic
 
 local scroll_offset = 0
+local last_active_section = 0
+local last_active_frame_idx = 0
 
 -- Note: semantic_workflow.perform is not implemented in the processor
 -- (it only provides transform/readback). previous versions attempted to
@@ -140,6 +142,23 @@ local function update_scroll(wheel, num_rows)
     scroll_offset = math.max(0, math.min(num_rows - MAX_DISPLAYED_SECTIONS, scroll_offset - wheel))
 end
 
+--- Returns the 1-based row index of a given (section, frame) pair in the
+--- visible row stream, taking collapsed state into account.
+local function compute_row_of(sheet, target_sec, target_frame)
+    local row = 0
+    for si = 1, #sheet.sections do
+        local sec = sheet.sections[si]
+        local visible = sec.collapsed and 1 or #sec.inputs
+        if si < target_sec then
+            row = row + visible
+        elseif si == target_sec then
+            row = row + math.min(target_frame, visible)
+            break
+        end
+    end
+    return row
+end
+
 local function interpolate_vectors_to_int(a, b, f)
     local result = {}
     for k, v in pairs(a) do
@@ -166,6 +185,11 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
 
     draw:text(grid_rect(COL0, ROW1, COL1 - COL0, 1), 'start', Locales.str('SEMANTIC_WORKFLOW_FRAMELIST_SECTION'))
     draw:text(grid_rect(COL1, ROW1, COL6 - COL1, 1), 'start', Locales.str(VIEW_MODE_HEADERS[view_index]))
+
+    -- Stats: total sections and total input frames
+    local total_inputs_count = 0
+    for _, s in ipairs(sheet.sections) do total_inputs_count = total_inputs_count + #s.inputs end
+    draw:small_text(grid_rect(0, ROW0, 3, 0.5), 'start', 'S:' .. #sheet.sections .. '  F:' .. total_inputs_count)
 
     if not button_draw_data then return end
 
@@ -372,7 +396,11 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             }) or #section.inputs == 1;
         end
 
-        draw:text(frame_box, 'end', section_index .. ':')
+        if input_sub_index == 1 then
+            draw:text(frame_box, 'end', section_index .. '#' .. #section.inputs .. ':')
+        else
+            draw:text(frame_box, 'end', section_index .. ':')
+        end
 
         if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
             sheet.preview_frame = { section_index = section_index, frame_index = input_sub_index }
@@ -480,6 +508,21 @@ function __impl.render(draw)
     local current_sheet = SemanticWorkflowProject:asserted_current()
 
     local num_rows = iterate_input_rows(SemanticWorkflowProject:asserted_current(), nil)
+
+    -- Auto-scroll to keep the active frame visible whenever it changes.
+    local af = current_sheet.active_frame
+    if af.section_index ~= last_active_section or af.frame_index ~= last_active_frame_idx then
+        last_active_section = af.section_index
+        last_active_frame_idx = af.frame_index
+        local target_row = compute_row_of(current_sheet, af.section_index, af.frame_index)
+        if target_row <= scroll_offset or target_row > scroll_offset + MAX_DISPLAYED_SECTIONS then
+            scroll_offset = math.max(0, math.min(
+                math.max(0, num_rows - MAX_DISPLAYED_SECTIONS),
+                target_row - math.floor(MAX_DISPLAYED_SECTIONS / 2)
+            ))
+        end
+    end
+
     local baseline, scrollbar_rect = draw_scrollbar(num_rows)
     local button_draw_data = draw_color_codes(baseline, scrollbar_rect, math.min(num_rows, MAX_DISPLAYED_SECTIONS)) or
         nil

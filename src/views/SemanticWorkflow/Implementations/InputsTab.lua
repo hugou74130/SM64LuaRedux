@@ -90,8 +90,11 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         MoveSectionDown = enum_next(),
         CopySection = enum_next(),
         PasteSection = enum_next(),
+        PrevSection = enum_next(),
+        NextSection = enum_next(),
         RepeatN = enum_next(2),
         RepeatInput = enum_next(),
+        InsertNBlank = enum_next(),
     }
 end)
 
@@ -441,6 +444,33 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet:run_to_preview()
     end
 
+    -- Navigation: jump to previous / next section
+    if ugui.button({
+            uid = UID.PrevSection,
+            rectangle = grid_rect(6, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_PREV_SECTION'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_PREV_SECTION_TOOL_TIP'),
+            is_enabled = section_idx > 1,
+        }) then
+        local dest = section_idx - 1
+        sheet.active_frame = { section_index = dest, frame_index = 1 }
+        sheet.preview_frame = { section_index = dest, frame_index = 1 }
+        sheet:run_to_preview()
+    end
+
+    if ugui.button({
+            uid = UID.NextSection,
+            rectangle = grid_rect(7, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_NEXT_SECTION'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_NEXT_SECTION_TOOL_TIP'),
+            is_enabled = section_idx < #sheet.sections,
+        }) then
+        local dest = section_idx + 1
+        sheet.active_frame = { section_index = dest, frame_index = 1 }
+        sheet.preview_frame = { section_index = dest, frame_index = 1 }
+        sheet:run_to_preview()
+    end
+
     -- Row 2: frame repeat (×N)
     draw:text(
         grid_rect(0, auto_row2, 3, Gui.SMALL_CONTROL_HEIGHT),
@@ -466,6 +496,30 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         local template = ugui.internal.deep_clone(edited_section.inputs[frame_idx])
         for i = 1, repeat_count do
             table.insert(edited_section.inputs, frame_idx + i, ugui.internal.deep_clone(template))
+        end
+        edited_section.collapsed = false
+        sheet:run_to_preview()
+    end
+
+    -- Row 3: insert N blank (neutral-input) frames
+    local auto_row3 = auto_row2 + Gui.SMALL_CONTROL_HEIGHT
+    draw:text(
+        grid_rect(0, auto_row3, 5, Gui.SMALL_CONTROL_HEIGHT),
+        'start',
+        Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK')
+    )
+    if ugui.button({
+            uid = UID.InsertNBlank,
+            rectangle = grid_rect(5, auto_row3, 3, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK_BTN'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        local frame_idx = sheet.active_frame.frame_index
+        for i = 1, repeat_count do
+            local tmp = {}
+            CloneInto(tmp, Joypad.input)
+            table.insert(edited_section.inputs, frame_idx + i, { tas_state = NewTASState(), joy = tmp })
         end
         edited_section.collapsed = false
         sheet:run_to_preview()
