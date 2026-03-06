@@ -184,7 +184,7 @@ This action cannot be undone.
     SEMANTIC_WORKFLOW_INPUTS_INVERT_SEL_TOOL_TIP = 'Invert the editing selection of every frame in this section',
     SEMANTIC_WORKFLOW_INPUTS_STATS_NO_SEL = 'no sel.',
     SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET = '\xce\x94angle',
-    SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY = 'Apply \xce\x94\xe2\x86\x92sel',
+    SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY = '\xce\x94\xe2\x86\x92sel',
     SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY_TOOL_TIP = 'Add the angle offset to goal_angle of all selected frames across all unlocked sections',
     SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP = 'Snap\xe2\x86\x92sel',
     SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP_TOOL_TIP = 'Snap goal_angle of selected frames to the nearest multiple of the \xce\x94angle value',
