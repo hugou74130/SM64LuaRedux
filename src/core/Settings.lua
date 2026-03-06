@@ -86,6 +86,8 @@ Settings = {
         default_section_timeout = 60,
         recent_projects = {},
         auto_save = false,
+        section_templates = {},
+        recent_end_actions = {},
     },
     variables = {
         {

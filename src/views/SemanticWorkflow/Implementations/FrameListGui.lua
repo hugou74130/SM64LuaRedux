@@ -109,6 +109,8 @@ local SECTION_COLOR_PALETTE <const> = {
 local scroll_offset = 0
 local last_active_section = 0
 local last_active_frame_idx = 0
+local last_clicked_section_index = nil
+local last_clicked_frame_index = nil
 
 -- Note: semantic_workflow.perform is not implemented in the processor
 -- (it only provides transform/readback). previous versions attempted to
@@ -250,6 +252,24 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
         active_global = active_global + sheet.active_frame.frame_index
         local marker_x = math.floor(tl_x + tl_w * (active_global / total_timeout_count))
         BreitbandGraphics.fill_rectangle({ x = marker_x - 1, y = tl_y, width = 2, height = tl_h }, '#FFFFFFFF')
+
+        -- Click on mini timeline: jump to the clicked section
+        local tl_rect_click = { x = tl_x, y = tl_y, width = tl_w, height = tl_h }
+        if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, tl_rect_click) then
+            local click_frac = (ugui_environment.mouse_position.x - tl_x) / tl_w
+            local click_frame = math.floor(click_frac * total_timeout_count)
+            local cum = 0
+            for si, sec in ipairs(sheet.sections) do
+                if click_frame < cum + sec.timeout or si == #sheet.sections then
+                    local fi = math.max(1, math.min(#sec.inputs, click_frame - cum + 1))
+                    sheet.active_frame = { section_index = si, frame_index = fi }
+                    sheet.preview_frame = { section_index = si, frame_index = fi }
+                    sheet:run_to_preview()
+                    break
+                end
+                cum = cum + sec.timeout
+            end
+        end
     end
 
     if not button_draw_data then return end
@@ -424,12 +444,12 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         return { x = r.x, y = section_rect.y, width = r.width, height = height and r.height or section_rect.height }
     end
 
-    -- Pre-compute cumulative frame offsets per section (frames before each section start)
+    -- Pre-compute cumulative frame offsets per section using timeout (matches GF jump navigation)
     local cum_frames = {}
     local cum_total = 0
     for si = 1, #sheet.sections do
         cum_frames[si] = cum_total
-        cum_total = cum_total + #sheet.sections[si].inputs
+        cum_total = cum_total + sheet.sections[si].timeout
     end
 
     iterate_input_rows(sheet, function(section, input, section_index, total_inputs, input_sub_index)
@@ -512,7 +532,16 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             BreitbandGraphics.fill_rectangle(section_rect, '#FF000018')
         end
 
-        draw:text(frame_box, 'end', (section.locked and '[L]' or '') .. section_index .. ':')
+        local lock_pfx = section.locked and '[L]' or ''
+        -- show sub-frame index for non-first rows; show global frame offset as small overlay on first row
+        local frame_label = input_sub_index == 1
+            and (lock_pfx .. section_index .. ':')
+            or (lock_pfx .. section_index .. ':' .. input_sub_index)
+        draw:text(frame_box, 'end', frame_label)
+        if input_sub_index == 1 and view_index == 1 then
+            local gf = cum_frames[section_index] + 1
+            draw:small_text(span(COL0 + 0.3, COL1), 'start', string.format('gf%d', gf))
+        end
 
         if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
             sheet.preview_frame = { section_index = section_index, frame_index = input_sub_index }
@@ -535,13 +564,33 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             })
 
             if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
-                if ugui.internal.is_mouse_just_down() and not ugui_environment.held_keys['control'] then
-                    for _, section in pairs(sheet.sections) do
-                        for _, input in pairs(section.inputs) do
-                            input.editing = false
+                if ugui.internal.is_mouse_just_down() then
+                    if ugui_environment.held_keys['shift'] and last_clicked_section_index and last_clicked_frame_index then
+                        -- Shift+click: range-select from last click to this frame
+                        local in_range = false
+                        iterate_input_rows(sheet, function(sec, inp, si, _, fi)
+                            local is_anchor = si == last_clicked_section_index and fi == last_clicked_frame_index
+                            local is_current = si == section_index and fi == input_sub_index
+                            if is_anchor or is_current then
+                                inp.editing = true
+                                if in_range then return true end
+                                in_range = true
+                            elseif in_range then
+                                inp.editing = true
+                            end
+                        end)
+                    elseif ugui_environment.held_keys['control'] then
+                        -- Ctrl+click: toggle this frame without touching others
+                        input.editing = not input.editing
+                    else
+                        -- Plain click: deselect all, select only this frame
+                        for _, sec in pairs(sheet.sections) do
+                            for _, inp in pairs(sec.inputs) do inp.editing = false end
                         end
+                        input.editing = true
                     end
-                    input.editing = true
+                    last_clicked_section_index = section_index
+                    last_clicked_frame_index = input_sub_index
                 elseif ugui.internal.environment.is_primary_down then
                     input.editing = true
                 end
@@ -559,20 +608,37 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 draw:text(span(COL4, COL5), 'end', tostring(tas_state.goal_angle))
                 draw:text(span(COL5, COL6), 'end',
                     tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
-            elseif input_sub_index == 1 then
-                -- show frame count in the unused angle space
-                draw:small_text(span(COL3, COL6), 'end', '×' .. #section.inputs)
+            else
+                -- Non-angle mode: show magnitude bar + value, plus ×N count on first row
+                local mag = tas_state.goal_mag or 0
+                local mag_frac = math.max(0, math.min(1, mag / 127))
+                local bar = span(COL3, COL6)
+                local bar_w = math.floor(bar.width * mag_frac)
+                if bar_w > 0 then
+                    BreitbandGraphics.fill_rectangle({
+                        x = bar.x,
+                        y = bar.y + math.floor(bar.height * 0.3),
+                        width = bar_w,
+                        height = math.max(1, math.floor(bar.height * 0.4)),
+                    }, '#88CCFF66')
+                end
+                if input_sub_index == 1 then
+                    draw:small_text(bar, 'end', '×' .. #section.inputs .. ' M:' .. mag)
+                else
+                    draw:small_text(bar, 'end', 'M:' .. mag)
+                end
             end
         elseif view_index == 2 then
             -- end action with cumulative frame offset, duration, and count (first row only)
             local label_prefix = (section.label and section.label ~= '') and (section.label .. ' · ') or ''
+            local lock_prefix = section.locked and '[L] ' or ''
             if input_sub_index == 1 then
                 local cum = cum_frames[section_index]
                 local dur_s = string.format('%.1fs', section.timeout / 30)
-                local text = string.format('[+%d] %s%s  ×%d (%s)', cum, label_prefix, Locales.action(section.end_action), #section.inputs, dur_s)
+                local text = string.format('%s[+%d] %s%s  x%d (%s)', lock_prefix, cum, label_prefix, Locales.action(section.end_action), #section.inputs, dur_s)
                 draw:small_text(active_frame_box, 'start', text)
             else
-                draw:small_text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
+                draw:small_text(active_frame_box, 'start', lock_prefix .. label_prefix .. Locales.action(section.end_action))
             end
         elseif view_index == 3 then
             -- numeric: mode, X/Y or angle, magnitude, flags
