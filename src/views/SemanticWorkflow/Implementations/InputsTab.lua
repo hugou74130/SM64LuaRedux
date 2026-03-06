@@ -112,6 +112,9 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         PasteFrames = enum_next(),
         Framewalk = enum_next(),
         InterpolateFrames = enum_next(),
+        FlipX = enum_next(),
+        FlipY = enum_next(),
+        SetMagAll = enum_next(),
     }
 end)
 
@@ -1170,6 +1173,58 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
     end
 
     magnitude_controls(draw, sheet, new_values, top + 3)
+
+    -- Batch joystick operations at same row as CopyFromGame (cols 2-8)
+    if ugui.button({
+            uid = UID.FlipX,
+            rectangle = grid_rect(2, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        for _, sec in pairs(sheet.sections) do
+            for _, inp in pairs(sec.inputs) do
+                if inp.editing then
+                    inp.tas_state.manual_joystick_x = -inp.tas_state.manual_joystick_x
+                    if inp.joy and inp.joy.X then inp.joy.X = -inp.joy.X end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.FlipY,
+            rectangle = grid_rect(4, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        for _, sec in pairs(sheet.sections) do
+            for _, inp in pairs(sec.inputs) do
+                if inp.editing then
+                    inp.tas_state.manual_joystick_y = -inp.tas_state.manual_joystick_y
+                    if inp.joy and inp.joy.Y then inp.joy.Y = -inp.joy.Y end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.SetMagAll,
+            rectangle = grid_rect(6, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        local mag = new_values.goal_mag
+        for _, sec in pairs(sheet.sections) do
+            for _, inp in pairs(sec.inputs) do
+                if inp.editing then inp.tas_state.goal_mag = mag end
+            end
+        end
+        sheet:run_to_preview()
+    end
+
     atan_controls(draw, sheet, new_values, top + 4)
 
     local changes = CloneInto(old_values, new_values)
