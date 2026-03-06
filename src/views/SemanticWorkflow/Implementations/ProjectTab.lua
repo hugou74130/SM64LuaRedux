@@ -260,6 +260,9 @@ function __impl.render(draw)
     available_sheets[n_sheets + 1] = Locales.str('SEMANTIC_WORKFLOW_PROJECT_ADD_SHEET')
 
     local uid = UID.ProjectSheetBase
+    -- Duplicate-mode rows use the upper half of the pre-allocated 1024-slot block
+    -- so they never collide with the toggle_buttons used in normal mode.
+    local uid_dup = UID.ProjectSheetBase + 512
     for i = 1, #available_sheets do
         local y = top + (i - 1) * Gui.MEDIUM_CONTROL_HEIGHT
         local is_real_sheet = i <= n_sheets
@@ -269,7 +272,7 @@ function __impl.render(draw)
             if not is_real_sheet then
                 -- Append-at-end button
                 if ugui.button({
-                        uid = uid,
+                        uid = uid_dup,
                         rectangle = grid_rect(0, y, 8, Gui.MEDIUM_CONTROL_HEIGHT),
                         text = Locales.str('SEMANTIC_WORKFLOW_PROJECT_DUPLICATE_APPEND_TOOL_TIP'),
                     }) then
@@ -283,7 +286,7 @@ function __impl.render(draw)
                         grid_rect(0, y, 8, Gui.MEDIUM_CONTROL_HEIGHT, 0), '#B8860064')
                 end
                 if ugui.button({
-                        uid = uid,
+                        uid = uid_dup,
                         rectangle = grid_rect(0, y, 8, Gui.MEDIUM_CONTROL_HEIGHT),
                         text = (is_source and '[src] ' or '\xe2\x86\x91 ') .. available_sheets[i],
                         tooltip = not is_source and Locales.str('SEMANTIC_WORKFLOW_PROJECT_DUPLICATE_INSERT_TOOL_TIP') or nil,
@@ -293,7 +296,7 @@ function __impl.render(draw)
                     duplicating_sheet_index = nil
                 end
             end
-            uid = uid + 1
+            uid_dup = uid_dup + 1
 
         -- ── NORMAL / BASE-SHEET SELECTION MODE rows ──────────────────────
         else
