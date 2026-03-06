@@ -180,6 +180,8 @@ This action cannot be undone.
     SEMANTIC_WORKFLOW_INPUTS_PASTE_FRAMES_TOOL_TIP = 'Insert clipboard frames after the active frame',
     SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES = 'Interpolate selected',
     SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES_TOOL_TIP = 'Linearly interpolate joystick XY, angle and magnitude between the first and last selected frames',
+    SEMANTIC_WORKFLOW_FRAMELIST_LOCK_SECTION = 'Lock this section (protect inputs from editing)',
+    SEMANTIC_WORKFLOW_FRAMELIST_UNLOCK_SECTION = 'Unlock this section (allow editing)',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_X = 'Flip X',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_X_TOOL_TIP = 'Mirror joystick X for all selected frames',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_Y = 'Flip Y',

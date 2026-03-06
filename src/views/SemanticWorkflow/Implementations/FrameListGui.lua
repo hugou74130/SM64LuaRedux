@@ -77,7 +77,7 @@ local SCROLLBAR_WIDTH <const> = 0.3
 
 local MAX_DISPLAYED_SECTIONS <const> = 15
 
-local NUM_UIDS_PER_ROW <const> = 2
+local NUM_UIDS_PER_ROW <const> = 3
 local BUTTON_COLORS <const> = {
     { background = '#0000FF64', button = '#0000BEFF' }, -- A
     { background = '#00B11664', button = '#00E62CFF' }, -- B
@@ -485,16 +485,34 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         if input_sub_index == 1 then
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
-                rectangle = span(COL0, COL0 + 0.3),
+                rectangle = span(COL0, COL0 + 0.2),
                 text = section.collapsed and '[icon:arrow_right]' or '[icon:arrow_down]',
                 tooltip = Locales.str(section.collapsed and 'SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION' or
                     'SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION'),
                 is_checked = not section.collapsed,
                 is_enabled = #section.inputs > 1,
-            }) or #section.inputs == 1;
+            }) or #section.inputs == 1
+            local new_locked = ugui.toggle_button({
+                uid = uid_base + 2,
+                rectangle = span(COL0 + 0.2, COL0 + 0.3),
+                text = section.locked and 'L' or '\xc2\xb7',
+                tooltip = section.locked
+                    and Locales.str('SEMANTIC_WORKFLOW_FRAMELIST_UNLOCK_SECTION')
+                    or Locales.str('SEMANTIC_WORKFLOW_FRAMELIST_LOCK_SECTION'),
+                is_checked = section.locked or false,
+            })
+            if new_locked ~= (section.locked or false) then
+                section.locked = new_locked or nil
+                SemanticWorkflowProject.dirty = true
+            end
         end
 
-        draw:text(frame_box, 'end', section_index .. ':')
+        -- Locked section: subtle red tint overlay
+        if section.locked then
+            BreitbandGraphics.fill_rectangle(section_rect, '#FF000018')
+        end
+
+        draw:text(frame_box, 'end', (section.locked and '[L]' or '') .. section_index .. ':')
 
         if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
             sheet.preview_frame = { section_index = section_index, frame_index = input_sub_index }
@@ -546,14 +564,15 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 draw:small_text(span(COL3, COL6), 'end', '×' .. #section.inputs)
             end
         elseif view_index == 2 then
-            -- end action with cumulative frame offset and count (first row only)
+            -- end action with cumulative frame offset, duration, and count (first row only)
             local label_prefix = (section.label and section.label ~= '') and (section.label .. ' · ') or ''
             if input_sub_index == 1 then
                 local cum = cum_frames[section_index]
-                local text = string.format('[+%d] %s%s  ×%d', cum, label_prefix, Locales.action(section.end_action), #section.inputs)
-                draw:text(active_frame_box, 'start', text)
+                local dur_s = string.format('%.1fs', section.timeout / 30)
+                local text = string.format('[+%d] %s%s  ×%d (%s)', cum, label_prefix, Locales.action(section.end_action), #section.inputs, dur_s)
+                draw:small_text(active_frame_box, 'start', text)
             else
-                draw:text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
+                draw:small_text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
             end
         elseif view_index == 3 then
             -- numeric: mode, X/Y or angle, magnitude, flags

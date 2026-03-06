@@ -177,6 +177,8 @@ Cette action est irréversible.
     SEMANTIC_WORKFLOW_INPUTS_PASTE_FRAMES_TOOL_TIP = 'Insérer les frames du presse-papiers après la frame active',
     SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES = 'Interpoler sélection',
     SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES_TOOL_TIP = 'Interpoler linéairement XY, angle et magnitude entre les première et dernière frames sélectionnées',
+    SEMANTIC_WORKFLOW_FRAMELIST_LOCK_SECTION = 'Verrouiller cette section (protéger les inputs)',
+    SEMANTIC_WORKFLOW_FRAMELIST_UNLOCK_SECTION = 'Déverrouiller cette section (permettre l\'édition)',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_X = 'Inv. X',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_X_TOOL_TIP = 'Inverser le joystick X pour toutes les frames sélectionnées',
     SEMANTIC_WORKFLOW_CONTROL_FLIP_Y = 'Inv. Y',

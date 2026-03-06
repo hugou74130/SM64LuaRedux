@@ -108,6 +108,7 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         CopyFromGame = enum_next(),
         ColorTag = enum_next(9), -- 9 buttons: 0=none + 8 colors
         GotoSection = enum_next(2),
+        GotoGlobalFrame = enum_next(2),
         CopyFrames = enum_next(),
         PasteFrames = enum_next(),
         Framewalk = enum_next(),
@@ -115,6 +116,7 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         FlipX = enum_next(),
         FlipY = enum_next(),
         SetMagAll = enum_next(),
+        AngleOffset = enum_next(3), -- label + numberbox + apply button
     }
 end)
 
@@ -256,7 +258,7 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
                 uid = UID.EndAction,
                 rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
                 text = Locales.action(section.end_action),
-                tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TOOL_TIP'),
+                tooltip = string.format('%s  [0x%08X]', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TOOL_TIP'), section.end_action),
             }) then
             end_action_search_text = ''
             ugui.internal.active_control = UID.EndActionTextbox
@@ -358,16 +360,44 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         total_frames = total_frames + sec.timeout
         total_inputs = total_inputs + #sec.inputs
     end
+    -- Compute current global frame for display + GF jump numberbox
+    local cur_gf = 0
+    for j = 1, sheet.active_frame.section_index - 1 do cur_gf = cur_gf + sheet.sections[j].timeout end
+    cur_gf = cur_gf + sheet.active_frame.frame_index
     draw:small_text(
-        grid_rect(0, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 8, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
+        grid_rect(0, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 5, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
         'start',
-        string.format('Sheet: %d sec  %d/%d frm  (GF:%d)', #sheet.sections, total_inputs, total_frames,
-            (function()
-                local g = 0
-                for j = 1, sheet.active_frame.section_index - 1 do g = g + sheet.sections[j].timeout end
-                return g + sheet.active_frame.frame_index
-            end)())
+        string.format('%d sec  %d/%d frm', #sheet.sections, total_inputs, total_frames)
     )
+    -- GF jump: numberbox on right side of stats row
+    draw:small_text(
+        grid_rect(5, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 0.7, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
+        'end',
+        'GF:'
+    )
+    local new_gf = ugui.numberbox({
+        uid = UID.GotoGlobalFrame,
+        rectangle = grid_rect(5.7, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 2.3, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
+        value = cur_gf,
+        places = math.max(1, math.floor(math.log10(total_frames + 1)) + 1),
+        tooltip = string.format('Global frame %d of %d — type to jump', cur_gf, total_frames),
+    })
+    if new_gf ~= cur_gf then
+        -- translate absolute frame to section/frame index
+        local target = math.max(1, math.min(total_frames, math.floor(new_gf)))
+        local cum = 0
+        for si, sec in ipairs(sheet.sections) do
+            local next_cum = cum + sec.timeout
+            if target <= next_cum or si == #sheet.sections then
+                local fi = math.max(1, math.min(#sec.inputs, target - cum))
+                sheet.active_frame = { section_index = si, frame_index = fi }
+                sheet.preview_frame = { section_index = si, frame_index = fi }
+                sheet:run_to_preview()
+                break
+            end
+            cum = next_cum
+        end
+    end
 
     top = top + 1
 
@@ -382,7 +412,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         rectangle = grid_rect(col_timeout, top + LABEL_HEIGHT, 2, Gui.MEDIUM_CONTROL_HEIGHT),
         value = edited_section.timeout,
         places = 4,
-        tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT_TOOL_TIP'),
+        tooltip = string.format('%s  (~%.2fs @ 30fps)', Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT_TOOL_TIP'), edited_section.timeout / 30),
     })
     any_changes = any_changes or old_timeout ~= edited_section.timeout
 
@@ -1232,9 +1262,11 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
     local current_sheet = SemanticWorkflowProject:asserted_current()
     if any_changes and edited_input then
         for _, section in pairs(sheet.sections) do
-            for _, input in pairs(section.inputs) do
-                if input.editing then
-                    CloneInto(input.tas_state, Settings.semantic_workflow.edit_entire_state and old_values or changes)
+            if not section.locked then
+                for _, input in pairs(section.inputs) do
+                    if input.editing then
+                        CloneInto(input.tas_state, Settings.semantic_workflow.edit_entire_state and old_values or changes)
+                    end
                 end
             end
         end
