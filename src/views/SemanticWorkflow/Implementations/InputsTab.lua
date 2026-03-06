@@ -111,6 +111,7 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         CopyFrames = enum_next(),
         PasteFrames = enum_next(),
         Framewalk = enum_next(),
+        InterpolateFrames = enum_next(),
     }
 end)
 
@@ -790,6 +791,40 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         edited_section.collapsed = false
         sheet:run_to_preview()
     end
+
+    -- Row 8: interpolate selected frames (linear lerp of XY + angle + mag between first and last selected)
+    local auto_row8 = auto_row7 + Gui.SMALL_CONTROL_HEIGHT
+    local first_sel, last_sel = nil, nil
+    for idx, inp in ipairs(edited_section.inputs) do
+        if inp.editing then
+            if first_sel == nil then first_sel = idx end
+            last_sel = idx
+        end
+    end
+    local can_interpolate = first_sel ~= nil and last_sel ~= nil and last_sel > first_sel + 1
+    if ugui.button({
+            uid = UID.InterpolateFrames,
+            rectangle = grid_rect(0, auto_row8, 8, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES_TOOL_TIP'),
+            is_enabled = can_interpolate,
+        }) then
+        sheet:push_undo_state()
+        local n = last_sel - first_sel
+        local ts_s = edited_section.inputs[first_sel].tas_state
+        local ts_e = edited_section.inputs[last_sel].tas_state
+        for step = 1, n - 1 do
+            local t = step / n
+            local ts = edited_section.inputs[first_sel + step].tas_state
+            ts.manual_joystick_x = math.floor(ts_s.manual_joystick_x + t * (ts_e.manual_joystick_x - ts_s.manual_joystick_x) + 0.5)
+            ts.manual_joystick_y = math.floor(ts_s.manual_joystick_y + t * (ts_e.manual_joystick_y - ts_s.manual_joystick_y) + 0.5)
+            -- shortest-arc angle interpolation (mod 65536)
+            local da = ((ts_e.goal_angle - ts_s.goal_angle + 32768) % 65536) - 32768
+            ts.goal_angle = math.floor(ts_s.goal_angle + t * da + 0.5) % 65536
+            ts.goal_mag = math.floor(ts_s.goal_mag + t * (ts_e.goal_mag - ts_s.goal_mag) + 0.5)
+        end
+        sheet:run_to_preview()
+    end
 end
 
 --#endregion
@@ -1104,8 +1139,16 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
     new_values.swim = ugui.toggle_button({
         uid = UID.Swim,
         rectangle = grid_rect(6.5, top + 4, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-        text = 'Swim',
+        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SWIM'),
         is_checked = new_values.swim,
+    })
+
+    new_values.framewalk = ugui.toggle_button({
+        uid = UID.Framewalk,
+        rectangle = grid_rect(5, top + 4, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK'),
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK_TOOL_TIP'),
+        is_checked = new_values.framewalk,
     })
 
     -- "Copy from game": apply current in-game controller state to all selected frames

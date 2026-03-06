@@ -198,16 +198,24 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
     draw:text(grid_rect(COL0, ROW1, COL1 - COL0, 1), 'start', Locales.str('SEMANTIC_WORKFLOW_FRAMELIST_SECTION'))
     draw:text(grid_rect(COL1, ROW1, COL6 - COL1, 1), 'start', Locales.str(VIEW_MODE_HEADERS[view_index]))
 
-    -- Stats: total sections, total frames, estimated duration, dirty marker
-    local total_inputs_count = 0
-    for _, s in ipairs(sheet.sections) do total_inputs_count = total_inputs_count + #s.inputs end
-    local duration_s = string.format('%.1f', total_inputs_count / 30)
+    -- Stats: total sections, total frames, selected count, estimated duration, dirty marker
+    local total_inputs_count, total_timeout_count, sel_count = 0, 0, 0
+    for _, s in ipairs(sheet.sections) do
+        total_inputs_count = total_inputs_count + #s.inputs
+        total_timeout_count = total_timeout_count + s.timeout
+        for _, inp in ipairs(s.inputs) do
+            if inp.editing then sel_count = sel_count + 1 end
+        end
+    end
+    local duration_s = string.format('%.1f', total_timeout_count / 30)
     local dirty_mark = SemanticWorkflowProject.dirty and ' [*]' or ''
+    local sel_str = sel_count > 0 and ('  [' .. sel_count .. '\xe2\x98\x85]') or ''
     draw:small_text(grid_rect(0, ROW0, 3, 0.5), 'start',
-        'S:' .. #sheet.sections .. '  F:' .. total_inputs_count .. ' (~' .. duration_s .. 's)' .. dirty_mark)
+        'S:' .. #sheet.sections .. '  F:' .. total_inputs_count .. '/' .. total_timeout_count
+        .. ' (~' .. duration_s .. 's)' .. sel_str .. dirty_mark)
 
-    -- Mini timeline: proportional bars showing each section's frame share
-    if total_inputs_count > 0 then
+    -- Mini timeline: proportional bars showing each section's planned duration (timeout)
+    if total_timeout_count > 0 then
         local tl_rect = grid_rect(COL0, ROW2 - 0.2, COL_1 - SCROLLBAR_WIDTH, 0.2, 0)
         local tl_x = tl_rect.x
         local tl_w = tl_rect.width
@@ -215,21 +223,19 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
         local tl_h = tl_rect.height
         local cur_x = tl_x
         for si, sec in ipairs(sheet.sections) do
-            local frac = #sec.inputs / total_inputs_count
+            local frac = sec.timeout / total_timeout_count
             local seg_w = math.max(1, math.floor(tl_w * frac))
-            if si == #sheet.sections then
-                seg_w = tl_x + tl_w - cur_x -- fill remainder
-            end
+            if si == #sheet.sections then seg_w = tl_x + tl_w - cur_x end
             local color = (sec.color_tag and sec.color_tag > 0 and SECTION_COLOR_PALETTE[sec.color_tag]) or
                 (si % 2 == 0 and '#88888866' or '#AAAAAA66')
             BreitbandGraphics.fill_rectangle({ x = cur_x, y = tl_y, width = seg_w, height = tl_h }, color)
             cur_x = cur_x + seg_w
         end
-        -- Highlight the active section in the timeline
+        -- Highlight the active section in the timeline with white border
         local active_si = sheet.active_frame.section_index
         local offset_x = tl_x
         for si, sec in ipairs(sheet.sections) do
-            local frac = #sec.inputs / total_inputs_count
+            local frac = sec.timeout / total_timeout_count
             local seg_w = math.max(1, math.floor(tl_w * frac))
             if si == #sheet.sections then seg_w = tl_x + tl_w - offset_x end
             if si == active_si then
@@ -238,6 +244,12 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
             end
             offset_x = offset_x + seg_w
         end
+        -- Active frame position marker: thin vertical white line
+        local active_global = 0
+        for j = 1, active_si - 1 do active_global = active_global + sheet.sections[j].timeout end
+        active_global = active_global + sheet.active_frame.frame_index
+        local marker_x = math.floor(tl_x + tl_w * (active_global / total_timeout_count))
+        BreitbandGraphics.fill_rectangle({ x = marker_x - 1, y = tl_y, width = 2, height = tl_h }, '#FFFFFFFF')
     end
 
     if not button_draw_data then return end
@@ -544,15 +556,16 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 draw:text(active_frame_box, 'start', label_prefix .. Locales.action(section.end_action))
             end
         elseif view_index == 3 then
-            -- numeric: X/Y and goal angle in compact form
+            -- numeric: mode, X/Y or angle, magnitude, flags
             local ts = tas_state
             local mode_char = MODE_TEXTS[ts.movement_mode + 1]
             local x = (input.joy and input.joy.X) or 0
             local y = (input.joy and input.joy.Y) or 0
             local angle_str = ts.movement_mode == MovementModes.match_angle
-                and string.format('A:%d', ts.goal_angle)
-                or string.format('X:%-4d Y:%d', x, y)
-            local text = string.format('%s %s', mode_char, angle_str)
+                and string.format('A:%5d', ts.goal_angle)
+                or string.format('X:%-4d Y:%-4d', x, y)
+            local flags = (ts.framewalk and 'FW ' or '') .. (ts.swim and 'SW' or '')
+            local text = string.format('%s %s M:%-3d %s', mode_char, angle_str, ts.goal_mag or 0, flags)
             draw:small_text(active_frame_box, 'start', text)
         end
 
@@ -572,6 +585,18 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                     sheet.active_frame = { section_index = section_index, frame_index = input_sub_index }
                 end
             end
+        end
+
+        -- Section timeout progress: thin bar at section row top showing inputs/timeout ratio
+        if input_sub_index == 1 and section.timeout > 0 then
+            local fill_frac = math.min(1.0, #section.inputs / section.timeout)
+            local bar_color = fill_frac >= 1.0 and '#00FF88AA' or '#4488FFAA'
+            BreitbandGraphics.fill_rectangle({
+                x = section_rect.x,
+                y = section_rect.y,
+                width = math.floor(section_rect.width * fill_frac),
+                height = 2,
+            }, bar_color)
         end
 
         -- Timeout mismatch: right-edge orange strip when timeout < inputs (unreachable frames)

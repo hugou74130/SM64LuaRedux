@@ -21,6 +21,9 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         DefaultSectionTimeout = enum_next(2),
         ToggleAutoSave = enum_next(),
         FitAllTimeouts = enum_next(),
+        ClearColorTags = enum_next(),
+        ClearLabels = enum_next(),
+        DeselectAll = enum_next(),
     }
 end)
 
@@ -84,5 +87,62 @@ function __impl.render(draw)
             end
             sheet:run_to_preview()
         end
+    end
+
+    if ugui.button({
+            uid = UID.ClearColorTags,
+            rectangle = grid_rect(0, top + Gui.MEDIUM_CONTROL_HEIGHT * 5, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_CLEAR_COLOR_TAGS'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_CLEAR_COLOR_TAGS_TOOL_TIP'),
+            is_enabled = sheet ~= nil,
+        }) then
+        if sheet then
+            sheet:push_undo_state()
+            for _, section in ipairs(sheet.sections) do section.color_tag = nil end
+            SemanticWorkflowProject.dirty = true
+        end
+    end
+
+    if ugui.button({
+            uid = UID.ClearLabels,
+            rectangle = grid_rect(4, top + Gui.MEDIUM_CONTROL_HEIGHT * 5, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_CLEAR_LABELS'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_CLEAR_LABELS_TOOL_TIP'),
+            is_enabled = sheet ~= nil,
+        }) then
+        if sheet then
+            sheet:push_undo_state()
+            for _, section in ipairs(sheet.sections) do section.label = nil end
+            SemanticWorkflowProject.dirty = true
+        end
+    end
+
+    if ugui.button({
+            uid = UID.DeselectAll,
+            rectangle = grid_rect(0, top + Gui.MEDIUM_CONTROL_HEIGHT * 6, 8, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_DESELECT_ALL'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_PREFERENCES_DESELECT_ALL_TOOL_TIP'),
+            is_enabled = sheet ~= nil,
+        }) then
+        if sheet then
+            for _, section in ipairs(sheet.sections) do
+                for _, inp in ipairs(section.inputs) do inp.editing = false end
+            end
+        end
+    end
+
+    -- Sheet statistics display
+    if sheet then
+        local total_inputs, total_timeout = 0, 0
+        for _, sec in ipairs(sheet.sections) do
+            total_inputs = total_inputs + #sec.inputs
+            total_timeout = total_timeout + sec.timeout
+        end
+        draw:small_text(
+            grid_rect(0, top + Gui.MEDIUM_CONTROL_HEIGHT * 7, 8, Gui.MEDIUM_CONTROL_HEIGHT),
+            'start',
+            string.format('%d secs  %d/%d frames  ~%.1fs @ 30fps',
+                #sheet.sections, total_inputs, total_timeout, total_timeout / 30)
+        )
     end
 end
