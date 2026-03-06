@@ -85,11 +85,15 @@ local RenderConfirmPurgeDialog = create_confirm_dialog(
             ignored_files[sheet_meta.name .. '.sws'] = true
             ignored_files[sheet_meta.name .. '.sws.savestate'] = true
         end
-        for file in io.popen('dir \"' .. project_folder .. '\" /b'):lines() do
-            if ignored_files[file] == nil and (file:match('(.)sws$') ~= nil or file:match('(.)sws(.)savestate$') ~= nil) then
-                assert(os.remove(project_folder .. file))
-                print('removed ' .. file)
+        local pipe = io.popen('dir \"' .. project_folder .. '\" /b')
+        if pipe then
+            for file in pipe:lines() do
+                if ignored_files[file] == nil and (file:match('(.)sws$') ~= nil or file:match('(.)sws(.)savestate$') ~= nil) then
+                    assert(os.remove(project_folder .. file))
+                    print('removed ' .. file)
+                end
             end
+            pipe:close()
         end
     end
 )

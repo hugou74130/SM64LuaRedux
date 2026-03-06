@@ -532,12 +532,12 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             BreitbandGraphics.fill_rectangle(section_rect, '#FF000018')
         end
 
-        local lock_pfx = section.locked and '[L]' or ''
+        local lock_pfx = section.locked and 'L' or ''
         -- show sub-frame index for non-first rows; show global frame offset as small overlay on first row
         local frame_label = input_sub_index == 1
             and (lock_pfx .. section_index .. ':')
             or (lock_pfx .. section_index .. ':' .. input_sub_index)
-        draw:text(frame_box, 'end', frame_label)
+        draw:small_text(frame_box, 'end', frame_label)
         if input_sub_index == 1 and view_index == 1 then
             local gf = cum_frames[section_index] + 1
             draw:small_text(span(COL0 + 0.3, COL1), 'start', string.format('gf%d', gf))

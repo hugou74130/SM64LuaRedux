@@ -446,7 +446,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     local timeout_label = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT')
         .. (frames_remaining > 0 and (' (+' .. frames_remaining .. ')') or
             frames_remaining == 0 and ' (=)' or ' (' .. frames_remaining .. ')')
-    draw:text(grid_rect(col_timeout, top, 2, LABEL_HEIGHT), 'start', timeout_label)
+    draw:small_text(grid_rect(col_timeout, top, 2, LABEL_HEIGHT), 'start', timeout_label)
     local old_timeout = edited_section.timeout
     edited_section.timeout = ugui.numberbox({
         uid = UID.Timeout,
@@ -1077,7 +1077,7 @@ local function atan_controls(draw, sheet, new_values, top)
             new_values.atan_n = atan_end - atan_start
             sheet.preview_frame = previous_preview_frame
             FrameListGui.special_select_handler = nil
-            any_changes = true
+            -- changes detected automatically via CloneInto/any_entries below
         end
     end
 
@@ -1157,6 +1157,8 @@ local function atan_controls(draw, sheet, new_values, top)
 end
 
 local function joystick_controls_for_selected(draw, edited_section, edited_input)
+    if edited_section == nil or edited_input == nil then return end
+
     local top = TOP
 
     local sheet = SemanticWorkflowProject:asserted_current()
@@ -1164,9 +1166,9 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
     -- Section info bar: "S:N/T  F:M/C  GF:G  Label" in the 0.25 gap between controls row and joystick
     local si = sheet.active_frame.section_index
     local fi = sheet.active_frame.frame_index
-    local label_str = (edited_section and edited_section.label and edited_section.label ~= '') and
+    local label_str = (edited_section.label and edited_section.label ~= '') and
         ('  [' .. edited_section.label .. ']') or ''
-    local frame_count = edited_section and #edited_section.inputs or 0
+    local frame_count = #edited_section.inputs
     -- compute global frame offset (absolute frame number from sheet start)
     local global_offset = 0
     for j = 1, si - 1 do global_offset = global_offset + sheet.sections[j].timeout end

@@ -166,6 +166,19 @@ function __impl:load(file, load_state)
             self._savestate = ReadAll(file .. '.savestate')
         end
         CloneInto(self, contents)
+        -- clamp active/preview frame indices to valid bounds after loading
+        local n = #self.sections
+        if n > 0 then
+            self.active_frame.section_index = math.max(1, math.min(self.active_frame.section_index, n))
+            self.preview_frame.section_index = math.max(1, math.min(self.preview_frame.section_index, n))
+            self.active_frame.frame_index = math.max(1, math.min(
+                self.active_frame.frame_index, #self.sections[self.active_frame.section_index].inputs))
+            self.preview_frame.frame_index = math.max(1, math.min(
+                self.preview_frame.frame_index, #self.sections[self.preview_frame.section_index].inputs))
+        else
+            self.active_frame = { section_index = 1, frame_index = 1 }
+            self.preview_frame = { section_index = 1, frame_index = 1 }
+        end
     end
 end
 
