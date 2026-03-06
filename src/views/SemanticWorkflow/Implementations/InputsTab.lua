@@ -76,6 +76,7 @@ local UID = UIDProvider.allocate_once(__impl.name, function(enum_next)
         Timeout = enum_next(2),
         EndAction = enum_next(),
         EndActionTextbox = enum_next(),
+        EndActionFromGame = enum_next(),
         AvailableActions = enum_next(MAX_ACTION_GUESSES),
         SectionLabel = enum_next(),
         CollapseAll = enum_next(),
@@ -262,12 +263,31 @@ local END_ACTION_JOYMAP = {
 
 local function controls_for_end_action(section, edited_input, draw, column, top)
     local changed = false
-    draw:text(grid_rect(column, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
+    -- "From game" button: always visible, copies Mario's current action
+    if ugui.button({
+            uid = UID.EndActionFromGame,
+            rectangle = grid_rect(column + 3.5, top, 0.5, Gui.SMALL_CONTROL_HEIGHT),
+            text = '\xe2\x86\x90',
+            tooltip = string.format('Set end action from game  (current: %s  0x%08X)',
+                Locales.action(Memory.current.mario_action), Memory.current.mario_action),
+        }) then
+        section.end_action = Memory.current.mario_action
+        changed = true
+        end_action_search_text = nil
+        -- track in recently used
+        local recent = Settings.semantic_workflow.recent_end_actions
+        local act = Memory.current.mario_action
+        for ri = #recent, 1, -1 do
+            if recent[ri] == act then table.remove(recent, ri) end
+        end
+        table.insert(recent, 1, act)
+        while #recent > 5 do table.remove(recent) end
+    end
     if end_action_search_text == nil then
         -- end action "dropdown" is not visible
         if ugui.button({
                 uid = UID.EndAction,
-                rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+                rectangle = grid_rect(column, top, 3.5, Gui.SMALL_CONTROL_HEIGHT),
                 text = Locales.action(section.end_action),
                 tooltip = string.format('%s  [0x%08X]', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TOOL_TIP'), section.end_action),
             }) then
@@ -280,7 +300,7 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
         -- end action "dropdown" is visible
         end_action_search_text = ugui.textbox({
             uid = UID.EndActionTextbox,
-            rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(column, top, 3.5, Gui.SMALL_CONTROL_HEIGHT),
             text = end_action_search_text,
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TYPE_TO_SEARCH_TOOL_TIP'),
         }):lower()
@@ -292,7 +312,7 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
                 local action_name = Locales.action(recent_action)
                 if ugui.button({
                         uid = UID.AvailableActions + i,
-                        rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
+                        rectangle = grid_rect(column, top + Gui.SMALL_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 3.5, Gui.SMALL_CONTROL_HEIGHT),
                         text = '\xe2\x98\x85 ' .. action_name,
                         tooltip = string.format('[0x%08X] (recently used)', recent_action),
                     }) then
@@ -306,10 +326,10 @@ local function controls_for_end_action(section, edited_input, draw, column, top)
             return changed
         end
         for action, action_name in pairs(Locales.raw().ACTIONS) do
-            if action_name:find(end_action_search_text, 1, true) ~= nil then
+            if end_action_search_text ~= nil and action_name:find(end_action_search_text, 1, true) ~= nil then
                 if ugui.button({
                         uid = UID.AvailableActions + i,
-                        rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
+                        rectangle = grid_rect(column, top + Gui.SMALL_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 3.5, Gui.SMALL_CONTROL_HEIGHT),
                         text = action_name,
                     }) then
                     end_action_search_text = nil
@@ -385,23 +405,19 @@ end
 
 local function section_controls_for_selected(draw, edited_section, edited_input)
     local sheet = SemanticWorkflowProject:asserted_current()
-
     local top = TOP
-    local col_timeout = 4
-
     local any_changes = false
 
     if edited_section == nil then return end
 
     local is_locked = edited_section.locked or false
 
-    -- Sheet-wide stats in the gap (TOP+MEDIUM_CONTROL_HEIGHT to TOP+1)
+    -- Stats bar in the TOP..TOP+1 gap
     local total_frames, total_inputs = 0, 0
     for _, sec in ipairs(sheet.sections) do
         total_frames = total_frames + sec.timeout
         total_inputs = total_inputs + #sec.inputs
     end
-    -- Compute current global frame for display + GF jump numberbox
     local cur_gf = 0
     for j = 1, sheet.active_frame.section_index - 1 do cur_gf = cur_gf + sheet.sections[j].timeout end
     cur_gf = cur_gf + sheet.active_frame.frame_index
@@ -410,21 +426,18 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         'start',
         string.format('%d sec  %d/%d frm', #sheet.sections, total_inputs, total_frames)
     )
-    -- GF jump: numberbox on right side of stats row
     draw:small_text(
         grid_rect(5, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 0.7, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
-        'end',
-        'GF:'
+        'end', 'GF:'
     )
     local new_gf = ugui.numberbox({
         uid = UID.GotoGlobalFrame,
         rectangle = grid_rect(5.7, TOP + Gui.MEDIUM_CONTROL_HEIGHT, 2.3, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
         value = cur_gf,
-        places = math.max(1, math.floor(math.log10(total_frames + 1)) + 1),
-        tooltip = string.format('Global frame %d of %d — type to jump', cur_gf, total_frames),
+        places = math.max(1, math.floor(math.log(total_frames + 1) / math.log(10)) + 1),
+        tooltip = string.format('Global frame %d of %d', cur_gf, total_frames),
     })
     if new_gf ~= cur_gf then
-        -- translate absolute frame to section/frame index
         local target = math.max(1, math.min(total_frames, math.floor(new_gf)))
         local cum = 0
         for si, sec in ipairs(sheet.sections) do
@@ -441,45 +454,37 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
 
     top = top + 1
+    local section_idx = sheet.active_frame.section_index
 
+    -- Row 0: End action (0-4) | Timeout (4-6) | -All (6-7) | +All (7-8)
     local frames_remaining = edited_section.timeout - #edited_section.inputs
-    local timeout_label = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT')
-        .. (frames_remaining > 0 and (' (+' .. frames_remaining .. ')') or
-            frames_remaining == 0 and ' (=)' or ' (' .. frames_remaining .. ')')
-    draw:small_text(grid_rect(col_timeout, top, 2, LABEL_HEIGHT), 'start', timeout_label)
-    local old_timeout = edited_section.timeout
-    edited_section.timeout = ugui.numberbox({
-        uid = UID.Timeout,
-        rectangle = grid_rect(col_timeout, top + LABEL_HEIGHT, 2, Gui.MEDIUM_CONTROL_HEIGHT),
-        value = edited_section.timeout,
-        places = 4,
-        is_enabled = not is_locked,
-        tooltip = string.format('%s  (~%.2fs @ 30fps)%s', Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT_TOOL_TIP'),
-            edited_section.timeout / 30, is_locked and '  [LOCKED]' or ''),
-    })
-    any_changes = any_changes or old_timeout ~= edited_section.timeout
-
+    local fr_str = frames_remaining > 0 and ('+' .. frames_remaining)
+        or frames_remaining == 0 and '=' or tostring(frames_remaining)
     if not is_locked then
         any_changes = any_changes or controls_for_end_action(edited_section, edited_input, draw, 0, top)
     else
-        -- Show end_action as read-only button when locked
-        draw:text(grid_rect(0, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
         ugui.button({
             uid = UID.EndAction,
-            rectangle = grid_rect(0, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, top, 4, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.action(edited_section.end_action) .. '  [LOCKED]',
             is_enabled = false,
         })
     end
-
-    if any_changes then
-        sheet:run_to_preview()
-    end
-
-    -- Collapse All / Expand All (always visible when a section is selected)
+    local old_timeout = edited_section.timeout
+    edited_section.timeout = ugui.numberbox({
+        uid = UID.Timeout,
+        rectangle = grid_rect(4, top, 2, Gui.SMALL_CONTROL_HEIGHT),
+        value = edited_section.timeout,
+        places = 4,
+        is_enabled = not is_locked,
+        tooltip = string.format('Timeout (%s)  ~%.2fs @ 30fps%s', fr_str,
+            edited_section.timeout / 30, is_locked and '  [LOCKED]' or ''),
+    })
+    any_changes = any_changes or old_timeout ~= edited_section.timeout
+    if any_changes then sheet:run_to_preview() end
     if ugui.button({
             uid = UID.CollapseAll,
-            rectangle = grid_rect(6, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(6, top, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_ALL'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_ALL_TOOL_TIP'),
         }) then
@@ -488,53 +493,21 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         end
         SemanticWorkflowProject.dirty = true
     end
-
     if ugui.button({
             uid = UID.ExpandAll,
-            rectangle = grid_rect(7, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(7, top, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_EXPAND_ALL'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_EXPAND_ALL_TOOL_TIP'),
         }) then
-        for _, section in ipairs(sheet.sections) do
-            section.collapsed = false
-        end
+        for _, section in ipairs(sheet.sections) do section.collapsed = false end
         SemanticWorkflowProject.dirty = true
     end
 
-    -- Section label + jump-to-first/last navigation in the free left space
-    local section_idx = sheet.active_frame.section_index
-    local label_row = top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + LABEL_HEIGHT
-    draw:text(
-        grid_rect(col_timeout, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT, 2, LABEL_HEIGHT),
-        'start',
-        Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_LABEL')
-    )
-    local old_label = edited_section.label or ''
-    local new_label = ugui.textbox({
-        uid = UID.SectionLabel,
-        rectangle = grid_rect(col_timeout, label_row, 2, Gui.MEDIUM_CONTROL_HEIGHT),
-        text = old_label,
-        tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_LABEL_TOOL_TIP'),
-    })
-    if new_label ~= old_label then
-        edited_section.label = new_label ~= '' and new_label or nil
-        SemanticWorkflowProject.dirty = true
-    end
-
-    -- "Go to preview frame" shortcut in label_row at col 6-8
-    if ugui.button({
-            uid = UID.GotoPreview,
-            rectangle = grid_rect(6, label_row, 2, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_GOTO_PREVIEW'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_GOTO_PREVIEW_TOOL_TIP'),
-        }) then
-        sheet.active_frame = ugui.internal.deep_clone(sheet.preview_frame)
-    end
-
-    -- First / Prev / [section N of T] / Next / Last navigation (free x=0..4 space of label row)
+    -- Row 1: |< < [N] > >| (0-4) | Label textbox (4-6.5) | →Preview (6.5-8)
+    local r1 = top + Gui.SMALL_CONTROL_HEIGHT
     if ugui.button({
             uid = UID.FirstSection,
-            rectangle = grid_rect(0, label_row, 0.6, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r1, 0.6, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_FIRST_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_FIRST_SECTION_TOOL_TIP'),
             is_enabled = section_idx > 1,
@@ -545,7 +518,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.PrevSection,
-            rectangle = grid_rect(0.6, label_row, 0.7, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(0.6, r1, 0.7, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_PREV_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_PREV_SECTION_TOOL_TIP'),
             is_enabled = section_idx > 1,
@@ -555,13 +528,12 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet.preview_frame = { section_index = dest, frame_index = 1 }
         sheet:run_to_preview()
     end
-    -- Section number direct-jump: shows "N/T" and lets user type to jump to section N
     local new_sec_idx = ugui.numberbox({
         uid = UID.GotoSection,
-        rectangle = grid_rect(1.3, label_row, 1.4, Gui.MEDIUM_CONTROL_HEIGHT),
+        rectangle = grid_rect(1.3, r1, 1.4, Gui.SMALL_CONTROL_HEIGHT),
         value = section_idx,
-        places = math.max(1, math.floor(math.log10(#sheet.sections + 1)) + 1),
-        tooltip = string.format('Section %d of %d — type to jump', section_idx, #sheet.sections),
+        places = math.max(1, math.floor(math.log(#sheet.sections + 1) / math.log(10)) + 1),
+        tooltip = string.format('Section %d of %d', section_idx, #sheet.sections),
     })
     if new_sec_idx ~= section_idx then
         local dest = math.max(1, math.min(#sheet.sections, math.floor(new_sec_idx)))
@@ -571,7 +543,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.NextSection,
-            rectangle = grid_rect(2.7, label_row, 0.7, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(2.7, r1, 0.7, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_NEXT_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_NEXT_SECTION_TOOL_TIP'),
             is_enabled = section_idx < #sheet.sections,
@@ -583,7 +555,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.LastSection,
-            rectangle = grid_rect(3.4, label_row, 0.6, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(3.4, r1, 0.6, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_LAST_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_LAST_SECTION_TOOL_TIP'),
             is_enabled = section_idx < #sheet.sections,
@@ -593,16 +565,31 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet.preview_frame = { section_index = dest, frame_index = 1 }
         sheet:run_to_preview()
     end
+    local old_label = edited_section.label or ''
+    local new_label = ugui.textbox({
+        uid = UID.SectionLabel,
+        rectangle = grid_rect(4, r1, 2.5, Gui.SMALL_CONTROL_HEIGHT),
+        text = old_label,
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_LABEL_TOOL_TIP'),
+    })
+    if new_label ~= old_label then
+        edited_section.label = new_label ~= '' and new_label or nil
+        SemanticWorkflowProject.dirty = true
+    end
+    if ugui.button({
+            uid = UID.GotoPreview,
+            rectangle = grid_rect(6.5, r1, 1.5, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_GOTO_PREVIEW'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_GOTO_PREVIEW_TOOL_TIP'),
+        }) then
+        sheet.active_frame = ugui.internal.deep_clone(sheet.preview_frame)
+    end
 
-    -- ── Section automation ────────────────────────────────────────────────
-    -- Two compact rows placed below the label textbox.
-    local auto_row1 = top + 2 * LABEL_HEIGHT + 2 * Gui.MEDIUM_CONTROL_HEIGHT
-    local auto_row2 = auto_row1 + Gui.SMALL_CONTROL_HEIGHT
-
-    -- Row 1: move up/down, copy, paste
+    -- Row 2: ↑ | ↓ | Copy sec | Paste sec | Fit | Trim
+    local r2 = r1 + Gui.SMALL_CONTROL_HEIGHT
     if ugui.button({
             uid = UID.MoveSectionUp,
-            rectangle = grid_rect(0, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r2, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_UP'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_UP_TOOL_TIP'),
             is_enabled = section_idx > 1 and not is_locked,
@@ -613,10 +600,9 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet.active_frame.section_index = section_idx - 1
         sheet:run_to_preview()
     end
-
     if ugui.button({
             uid = UID.MoveSectionDown,
-            rectangle = grid_rect(1, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(1, r2, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_DOWN'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_MOVE_DOWN_TOOL_TIP'),
             is_enabled = section_idx < #sheet.sections and not is_locked,
@@ -627,33 +613,30 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet.active_frame.section_index = section_idx + 1
         sheet:run_to_preview()
     end
-
     if ugui.button({
             uid = UID.CopySection,
-            rectangle = grid_rect(2, auto_row1, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(2, r2, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_COPY'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_COPY_TOOL_TIP'),
         }) then
         clipboard_section = ugui.internal.deep_clone(edited_section)
     end
-
     if ugui.button({
             uid = UID.PasteSection,
-            rectangle = grid_rect(4, auto_row1, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(4, r2, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_PASTE'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SECTION_PASTE_TOOL_TIP'),
             is_enabled = clipboard_section ~= nil,
         }) then
-        if clipboard_section == nil then return end  -- is_enabled already guards this; nil-check for type safety
+        if clipboard_section == nil then return end
         sheet:push_undo_state()
         table.insert(sheet.sections, section_idx + 1, ugui.internal.deep_clone(clipboard_section))
         sheet.active_frame.section_index = section_idx + 1
         sheet:run_to_preview()
     end
-
     if ugui.button({
             uid = UID.FitTimeout,
-            rectangle = grid_rect(6, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(6, r2, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_FIT_TIMEOUT'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_FIT_TIMEOUT_TOOL_TIP'),
             is_enabled = not is_locked,
@@ -662,39 +645,33 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         edited_section.timeout = #edited_section.inputs
         sheet:run_to_preview()
     end
-
     if ugui.button({
             uid = UID.TrimInputs,
-            rectangle = grid_rect(7, auto_row1, 1, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(7, r2, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TRIM_INPUTS'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TRIM_INPUTS_TOOL_TIP'),
             is_enabled = #edited_section.inputs > edited_section.timeout and not is_locked,
         }) then
         sheet:push_undo_state()
-        while #edited_section.inputs > edited_section.timeout do
-            table.remove(edited_section.inputs)
-        end
+        while #edited_section.inputs > edited_section.timeout do table.remove(edited_section.inputs) end
         sheet.active_frame.frame_index = math.min(sheet.active_frame.frame_index, #edited_section.inputs)
         sheet:run_to_preview()
     end
 
-    -- Row 2: frame repeat (×N)
-    draw:text(
-        grid_rect(0, auto_row2, 3, Gui.SMALL_CONTROL_HEIGHT),
-        'start',
-        Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_N')
-    )
+    -- Row 3: × label | N numberbox | Repeat copies | Insert blank  (both use repeat_count)
+    local r3 = r2 + Gui.SMALL_CONTROL_HEIGHT
+    draw:small_text(grid_rect(0, r3, 0.9, Gui.SMALL_CONTROL_HEIGHT), 'center', '\xc3\x97')
     repeat_count = ugui.numberbox({
         uid = UID.RepeatN,
-        rectangle = grid_rect(3, auto_row2, 2, Gui.SMALL_CONTROL_HEIGHT),
+        rectangle = grid_rect(0.9, r3, 1.6, Gui.SMALL_CONTROL_HEIGHT),
         value = repeat_count,
         places = 3,
+        tooltip = 'Repeat / blank insert count',
     })
     if repeat_count < 1 or repeat_count >= 900 then repeat_count = 1 end
-
     if ugui.button({
             uid = UID.RepeatInput,
-            rectangle = grid_rect(5, auto_row2, 3, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(2.5, r3, 2.75, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_INPUT'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REPEAT_INPUT_TOOL_TIP'),
             is_enabled = not is_locked,
@@ -708,17 +685,9 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         edited_section.collapsed = false
         sheet:run_to_preview()
     end
-
-    -- Row 3: insert N blank (neutral-input) frames
-    local auto_row3 = auto_row2 + Gui.SMALL_CONTROL_HEIGHT
-    draw:text(
-        grid_rect(0, auto_row3, 5, Gui.SMALL_CONTROL_HEIGHT),
-        'start',
-        Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK')
-    )
     if ugui.button({
             uid = UID.InsertNBlank,
-            rectangle = grid_rect(5, auto_row3, 3, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(5.25, r3, 2.75, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK_BTN'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_N_BLANK_TOOL_TIP'),
             is_enabled = not is_locked,
@@ -734,19 +703,18 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet:run_to_preview()
     end
 
-    -- Row 4: split / merge
-    local auto_row4 = auto_row3 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 4: Split | Merge
+    local r4 = r3 + Gui.SMALL_CONTROL_HEIGHT
     if ugui.button({
             uid = UID.SplitSection,
-            rectangle = grid_rect(0, auto_row4, 4, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r4, 4, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SPLIT_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SPLIT_SECTION_TOOL_TIP'),
             is_enabled = sheet.active_frame.frame_index > 1 and #edited_section.inputs > 1 and not is_locked,
         }) then
         sheet:push_undo_state()
         local split_at = sheet.active_frame.frame_index
-        local first_half = {}
-        local second_half = {}
+        local first_half, second_half = {}, {}
         for i = 1, #edited_section.inputs do
             if i < split_at then
                 first_half[#first_half + 1] = ugui.internal.deep_clone(edited_section.inputs[i])
@@ -764,12 +732,31 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet.active_frame = { section_index = section_idx + 1, frame_index = 1 }
         sheet:run_to_preview()
     end
+    local next_section = sheet.sections[section_idx + 1]
+    if ugui.button({
+            uid = UID.MergeSection,
+            rectangle = grid_rect(4, r4, 4, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_MERGE_SECTION'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_MERGE_SECTION_TOOL_TIP'),
+            is_enabled = next_section ~= nil and not is_locked,
+        }) then
+        if next_section then
+            sheet:push_undo_state()
+            for _, inp in ipairs(next_section.inputs) do
+                edited_section.inputs[#edited_section.inputs + 1] = ugui.internal.deep_clone(inp)
+            end
+            edited_section.end_action = next_section.end_action
+            edited_section.timeout = math.max(edited_section.timeout + next_section.timeout, #edited_section.inputs)
+            table.remove(sheet.sections, section_idx + 1)
+            sheet:run_to_preview()
+        end
+    end
 
-    -- Row 5: select / deselect all + reverse section
-    local auto_row5 = auto_row4 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 5: Sel all | Desel | Reverse | Lock
+    local r5 = r4 + Gui.SMALL_CONTROL_HEIGHT
     if ugui.button({
             uid = UID.SelectAllFrames,
-            rectangle = grid_rect(0, auto_row5, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r5, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SELECT_ALL_FRAMES'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SELECT_ALL_FRAMES_TOOL_TIP'),
         }) then
@@ -777,7 +764,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.DeselectAllFrames,
-            rectangle = grid_rect(2, auto_row5, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(2, r5, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DESELECT_ALL_FRAMES'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DESELECT_ALL_FRAMES_TOOL_TIP'),
         }) then
@@ -787,7 +774,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.ReverseSection,
-            rectangle = grid_rect(4, auto_row5, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(4, r5, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REVERSE_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_REVERSE_SECTION_TOOL_TIP'),
             is_enabled = #edited_section.inputs > 1 and not is_locked,
@@ -800,10 +787,9 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         end
         sheet:run_to_preview()
     end
-    -- Lock + Collapse + advance to next section (finalize workflow)
     if ugui.button({
             uid = UID.LockAndCollapse,
-            rectangle = grid_rect(6, auto_row5, 2, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(6, r5, 2, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_LOCK_AND_COLLAPSE'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_LOCK_AND_COLLAPSE_TOOL_TIP'),
             is_enabled = not is_locked,
@@ -818,14 +804,14 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         SemanticWorkflowProject.dirty = true
     end
 
-    -- Row 6: section color tag picker (9 buttons: 0=none, 1-8=colors)
-    local auto_row6 = auto_row5 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 6: color tags (9 buttons)
+    local r6 = r5 + Gui.SMALL_CONTROL_HEIGHT
     local color_btn_w = 8 / 9
     local current_color = edited_section.color_tag or 0
     for ci = 0, 8 do
         if ugui.toggle_button({
                 uid = UID.ColorTag + ci,
-                rectangle = grid_rect(ci * color_btn_w, auto_row6, color_btn_w, Gui.SMALL_CONTROL_HEIGHT),
+                rectangle = grid_rect(ci * color_btn_w, r6, color_btn_w, Gui.SMALL_CONTROL_HEIGHT),
                 text = COLOR_TAG_NAMES[ci + 1],
                 tooltip = COLOR_TAG_TOOLTIPS[ci + 1],
                 is_checked = current_color == ci,
@@ -835,37 +821,15 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         end
     end
 
-    local next_section = sheet.sections[section_idx + 1]
-    if ugui.button({
-            uid = UID.MergeSection,
-            rectangle = grid_rect(4, auto_row4, 4, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_MERGE_SECTION'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_MERGE_SECTION_TOOL_TIP'),
-            is_enabled = next_section ~= nil and not is_locked,
-        }) then
-        if next_section then
-            sheet:push_undo_state()
-            -- append next section's inputs to current
-            for _, inp in ipairs(next_section.inputs) do
-                edited_section.inputs[#edited_section.inputs + 1] = ugui.internal.deep_clone(inp)
-            end
-            -- inherit next section's end action and timeout
-            edited_section.end_action = next_section.end_action
-            edited_section.timeout = math.max(edited_section.timeout + next_section.timeout, #edited_section.inputs)
-            table.remove(sheet.sections, section_idx + 1)
-            sheet:run_to_preview()
-        end
-    end
-
-    -- Row 7: copy / paste selected frames
-    local auto_row7 = auto_row6 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 7: Copy frames | Paste frames
+    local r7 = r6 + Gui.SMALL_CONTROL_HEIGHT
     local sel_count = 0
     for _, inp in ipairs(edited_section.inputs) do
         if inp.editing then sel_count = sel_count + 1 end
     end
     if ugui.button({
             uid = UID.CopyFrames,
-            rectangle = grid_rect(0, auto_row7, 4, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r7, 4, Gui.SMALL_CONTROL_HEIGHT),
             text = sel_count > 0
                 and (Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FRAMES') .. ' (' .. sel_count .. ')')
                 or Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FRAMES'),
@@ -881,7 +845,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     end
     if ugui.button({
             uid = UID.PasteFrames,
-            rectangle = grid_rect(4, auto_row7, 4, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(4, r7, 4, Gui.SMALL_CONTROL_HEIGHT),
             text = clipboard_frames and
                 (Locales.str('SEMANTIC_WORKFLOW_INPUTS_PASTE_FRAMES') .. ' (' .. #clipboard_frames .. ')')
                 or Locales.str('SEMANTIC_WORKFLOW_INPUTS_PASTE_FRAMES'),
@@ -899,8 +863,8 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
         sheet:run_to_preview()
     end
 
-    -- Row 8: interpolate selected frames (linear lerp of XY + angle + mag between first and last selected)
-    local auto_row8 = auto_row7 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 8: Interpolate (0-4) | Invert sel (4-6.5) | stats text (6.5-8)
+    local r8 = r7 + Gui.SMALL_CONTROL_HEIGHT
     local first_sel, last_sel = nil, nil
     for idx, inp in ipairs(edited_section.inputs) do
         if inp.editing then
@@ -911,7 +875,7 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
     local can_interpolate = first_sel ~= nil and last_sel ~= nil and last_sel > first_sel + 1
     if ugui.button({
             uid = UID.InterpolateFrames,
-            rectangle = grid_rect(0, auto_row8, 8, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r8, 4, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INTERPOLATE_FRAMES_TOOL_TIP'),
             is_enabled = can_interpolate,
@@ -925,28 +889,21 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
             local ts = edited_section.inputs[first_sel + step].tas_state
             ts.manual_joystick_x = math.floor(ts_s.manual_joystick_x + t * (ts_e.manual_joystick_x - ts_s.manual_joystick_x) + 0.5)
             ts.manual_joystick_y = math.floor(ts_s.manual_joystick_y + t * (ts_e.manual_joystick_y - ts_s.manual_joystick_y) + 0.5)
-            -- shortest-arc angle interpolation (mod 65536)
             local da = ((ts_e.goal_angle - ts_s.goal_angle + 32768) % 65536) - 32768
             ts.goal_angle = math.floor(ts_s.goal_angle + t * da + 0.5) % 65536
             ts.goal_mag = math.floor(ts_s.goal_mag + t * (ts_e.goal_mag - ts_s.goal_mag) + 0.5)
         end
         sheet:run_to_preview()
     end
-
-    -- Row 9: invert selection + selected-frame stats (min/max mag)
-    local auto_row9 = auto_row8 + Gui.SMALL_CONTROL_HEIGHT
     if ugui.button({
             uid = UID.InvertSel,
-            rectangle = grid_rect(0, auto_row9, 4, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(4, r8, 2.5, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INVERT_SEL'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INVERT_SEL_TOOL_TIP'),
         }) then
-        for _, inp in ipairs(edited_section.inputs) do
-            inp.editing = not inp.editing
-        end
+        for _, inp in ipairs(edited_section.inputs) do inp.editing = not inp.editing end
     end
-    local stats_min_mag, stats_max_mag = math.huge, -math.huge
-    local stats_sel = 0
+    local stats_min_mag, stats_max_mag, stats_sel = math.huge, -math.huge, 0
     for _, inp in ipairs(edited_section.inputs) do
         if inp.editing then
             local m = inp.tas_state.goal_mag or 0
@@ -955,40 +912,32 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
             stats_sel = stats_sel + 1
         end
     end
-    local stats_str = stats_sel > 0
-        and string.format('M:%d-%d n=%d', stats_min_mag, stats_max_mag, stats_sel)
-        or Locales.str('SEMANTIC_WORKFLOW_INPUTS_STATS_NO_SEL')
-    draw:small_text(grid_rect(4, auto_row9, 4, Gui.SMALL_CONTROL_HEIGHT), 'start', stats_str)
+    draw:small_text(grid_rect(6.5, r8, 1.5, Gui.SMALL_CONTROL_HEIGHT), 'start',
+        stats_sel > 0 and string.format('M%d-%d', stats_min_mag, stats_max_mag) or '')
 
-    -- Row 10: section templates — save current section as a template + insert template buttons
-    local auto_row10 = auto_row9 + Gui.SMALL_CONTROL_HEIGHT
+    -- Row 9: Save template | template buttons
+    local r9 = r8 + Gui.SMALL_CONTROL_HEIGHT
     local templates = Settings.semantic_workflow.section_templates
     if ugui.button({
             uid = UID.SaveTemplate,
-            rectangle = grid_rect(0, auto_row10, 2.5, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect(0, r9, 2.5, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SAVE_TEMPLATE'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_SAVE_TEMPLATE_TOOL_TIP'),
         }) then
         local name = (edited_section.label and edited_section.label ~= '') and edited_section.label or
             ('S' .. section_idx .. ':' .. Locales.action(edited_section.end_action))
-        -- remove existing template with same name to avoid duplicates
         for ti = #templates, 1, -1 do
             if templates[ti].name == name then table.remove(templates, ti) end
         end
-        table.insert(templates, 1, {
-            name = name,
-            section = ugui.internal.deep_clone(edited_section),
-        })
-        -- keep at most 10 templates
+        table.insert(templates, 1, { name = name, section = ugui.internal.deep_clone(edited_section) })
         while #templates > 10 do table.remove(templates) end
     end
-    -- show up to 3 most recent templates as insert buttons
     local tpl_w = 5.5 / math.min(3, math.max(1, #templates))
     for ti = 1, math.min(3, #templates) do
         local tpl = templates[ti]
         if ugui.button({
                 uid = UID.LoadTemplate + (ti - 1),
-                rectangle = grid_rect(2.5 + (ti - 1) * tpl_w, auto_row10, tpl_w, Gui.SMALL_CONTROL_HEIGHT),
+                rectangle = grid_rect(2.5 + (ti - 1) * tpl_w, r9, tpl_w, Gui.SMALL_CONTROL_HEIGHT),
                 text = tpl.name,
                 tooltip = string.format(Locales.str('SEMANTIC_WORKFLOW_INPUTS_LOAD_TEMPLATE_TOOL_TIP'), tpl.name),
             }) then
@@ -1010,13 +959,13 @@ end
 local function magnitude_controls(draw, sheet, new_values, top)
     new_values.high_magnitude = ugui.toggle_button({
         uid = UID.HighMag,
-        rectangle = grid_rect(2, top, 2, Gui.MEDIUM_CONTROL_HEIGHT),
+        rectangle = grid_rect(2, top, 2, Gui.SMALL_CONTROL_HEIGHT),
         text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_HIGH_MAG'),
         is_checked = new_values.high_magnitude,
     })
     new_values.goal_mag = ugui.numberbox({
         uid = UID.GoalMag,
-        rectangle = grid_rect(4, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+        rectangle = grid_rect(4, top, 1.5, Gui.SMALL_CONTROL_HEIGHT),
         places = 3,
         value = math.max(0, math.min(127, new_values.goal_mag)),
     })
@@ -1028,7 +977,7 @@ local function magnitude_controls(draw, sheet, new_values, top)
 
     if ugui.button({
             uid = UID.SpeedKick,
-            rectangle = grid_rect(5.5, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(5.5, top, 1.5, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SPDKICK'),
         }) then
         if new_values.goal_mag ~= 48 then
@@ -1040,7 +989,7 @@ local function magnitude_controls(draw, sheet, new_values, top)
 
     if ugui.button({
             uid = UID.ResetMag,
-            rectangle = grid_rect(7, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
+            rectangle = grid_rect(7, top, 1, Gui.SMALL_CONTROL_HEIGHT),
             text = Locales.str('MAG_RESET'),
         }) then
         new_values.goal_mag = 127
@@ -1066,7 +1015,7 @@ local function select_atan_start(selection_frame)
 end
 
 local function atan_controls(draw, sheet, new_values, top)
-    draw:text(grid_rect(0, top, 1, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'Atan:')
+    draw:small_text(grid_rect(0, top, 1, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'Atan:')
 
     if not sheet.busy then
         if FrameListGui.special_select_handler == select_atan_end then
@@ -1105,10 +1054,10 @@ local function atan_controls(draw, sheet, new_values, top)
         FrameListGui.special_select_handler = select_atan_start
     end
 
-    local label_offset = -0.5
+    local label_offset = -LABEL_HEIGHT  -- puts label just above its spinner
     top = top + Gui.MEDIUM_CONTROL_HEIGHT + 0.25
 
-    draw:text(grid_rect(0, top + label_offset, 0.75, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'N:')
+    draw:small_text(grid_rect(0, top + label_offset, 0.75, LABEL_HEIGHT), 'start', 'N:')
     new_values.atan_n = ugui.spinner({
         uid = UID.AtanN,
         rectangle = grid_rect(0, top, 1.25, Gui.MEDIUM_CONTROL_HEIGHT),
@@ -1118,7 +1067,7 @@ local function atan_controls(draw, sheet, new_values, top)
         increment = math.max(0.25, math.pow(10, Settings.atan_exp)),
     })
 
-    draw:text(grid_rect(1.25, top + label_offset, 0.75, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'D:')
+    draw:small_text(grid_rect(1.25, top + label_offset, 0.75, LABEL_HEIGHT), 'start', 'D:')
     new_values.atan_d = ugui.spinner({
         uid = UID.AtanD,
         rectangle = grid_rect(1.25, top, 1.75, Gui.MEDIUM_CONTROL_HEIGHT),
@@ -1128,7 +1077,7 @@ local function atan_controls(draw, sheet, new_values, top)
         increment = math.pow(10, Settings.atan_exp),
     })
 
-    draw:text(grid_rect(3, top + label_offset, 2.35, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'Start:')
+    draw:small_text(grid_rect(3, top + label_offset, 2.35, LABEL_HEIGHT), 'start', 'Start:')
     new_values.atan_start = ugui.spinner({
         uid = UID.AtanS,
         rectangle = grid_rect(3, top, 2.35, Gui.MEDIUM_CONTROL_HEIGHT),
@@ -1138,7 +1087,7 @@ local function atan_controls(draw, sheet, new_values, top)
         increment = math.pow(10, Settings.atan_exp),
     })
 
-    draw:text(grid_rect(5.5, top + label_offset, 0.5, Gui.MEDIUM_CONTROL_HEIGHT), 'start', 'E:')
+    draw:small_text(grid_rect(5.5, top + label_offset, 0.5, LABEL_HEIGHT), 'start', 'E:')
     Settings.atan_exp = ugui.spinner({
         uid = UID.AtanE,
         rectangle = grid_rect(5.5, top, 1, Gui.MEDIUM_CONTROL_HEIGHT),
@@ -1314,218 +1263,11 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
         is_checked = new_values.dyaw,
     })
 
-    new_values.swim = ugui.toggle_button({
-        uid = UID.Swim,
-        rectangle = grid_rect(6.5, top + 4, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SWIM'),
-        is_checked = new_values.swim,
-    })
-
-    new_values.framewalk = ugui.toggle_button({
-        uid = UID.Framewalk,
-        rectangle = grid_rect(5, top + 4, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK'),
-        tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK_TOOL_TIP'),
-        is_checked = new_values.framewalk,
-    })
-
-    -- "Set angle from game": apply Mario's current facing yaw to all selected frames (match_angle mode)
-    if ugui.button({
-            uid = UID.SetAngleFromGame,
-            rectangle = grid_rect(0, top + 3, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_ANGLE_FROM_GAME'),
-            tooltip = string.format('%s  [%d]', Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_ANGLE_FROM_GAME_TOOL_TIP'), Memory.current.mario_facing_yaw or 0),
-        }) then
-        sheet:push_undo_state()
-        local yaw = Memory.current.mario_facing_yaw or 0
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.tas_state.goal_angle = yaw % 65536
-                        inp.tas_state.movement_mode = MovementModes.match_angle
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-
-    -- "Copy from game": apply current in-game controller state to all selected frames
-    if ugui.button({
-            uid = UID.CopyFromGame,
-            rectangle = grid_rect(0, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FROM_GAME'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FROM_GAME_TOOL_TIP'),
-        }) then
-        local capture = ugui.internal.deep_clone(Joypad.input)
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.joy = ugui.internal.deep_clone(capture)
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-
     magnitude_controls(draw, sheet, new_values, top + 3)
 
-    -- Batch joystick operations at same row as CopyFromGame (cols 2-8)
-    if ugui.button({
-            uid = UID.FlipX,
-            rectangle = grid_rect(2, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X_TOOL_TIP'),
-        }) then
-        sheet:push_undo_state()
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.tas_state.manual_joystick_x = -inp.tas_state.manual_joystick_x
-                        if inp.joy and inp.joy.X then inp.joy.X = -inp.joy.X end
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-    if ugui.button({
-            uid = UID.FlipY,
-            rectangle = grid_rect(4, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y_TOOL_TIP'),
-        }) then
-        sheet:push_undo_state()
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.tas_state.manual_joystick_y = -inp.tas_state.manual_joystick_y
-                        if inp.joy and inp.joy.Y then inp.joy.Y = -inp.joy.Y end
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-    if ugui.button({
-            uid = UID.SetMagAll,
-            rectangle = grid_rect(6, top + 3 + Gui.SMALL_CONTROL_HEIGHT, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL_TOOL_TIP'),
-        }) then
-        sheet:push_undo_state()
-        local mag = new_values.goal_mag
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then inp.tas_state.goal_mag = mag end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-
-    -- AngleOffset batch op: rotate goal_angle of all selected frames by a fixed delta
-    draw:small_text(
-        grid_rect(0, top + 4, 1.5, Gui.SMALL_CONTROL_HEIGHT),
-        'end',
-        Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET')
-    )
-    angle_offset_val = ugui.numberbox({
-        uid = UID.AngleOffset,
-        rectangle = grid_rect(1.5, top + 4, 2.5, Gui.SMALL_CONTROL_HEIGHT),
-        value = angle_offset_val,
-        places = 5,
-    })
-    if ugui.button({
-            uid = UID.AngleOffset + 1,
-            rectangle = grid_rect(4, top + 4, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY_TOOL_TIP'),
-            is_enabled = angle_offset_val ~= 0,
-        }) then
-        sheet:push_undo_state()
-        local offset = math.floor(angle_offset_val) % 65536
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.tas_state.goal_angle = (inp.tas_state.goal_angle + offset) % 65536
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-    -- Snap selected goal_angle values to the nearest multiple of angle_offset_val
-    if ugui.button({
-            uid = UID.AngleOffset + 2,
-            rectangle = grid_rect(6, top + 4, 2, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP_TOOL_TIP'),
-            is_enabled = angle_offset_val ~= 0,
-        }) then
-        sheet:push_undo_state()
-        local snap = math.abs(math.floor(angle_offset_val))
-        if snap > 0 then
-            for _, sec in pairs(sheet.sections) do
-                if not sec.locked then
-                    for _, inp in pairs(sec.inputs) do
-                        if inp.editing then
-                            inp.tas_state.goal_angle = (math.floor(inp.tas_state.goal_angle / snap + 0.5) * snap) % 65536
-                        end
-                    end
-                end
-            end
-            sheet:run_to_preview()
-        end
-    end
-
-    -- Scale Mag: multiply goal_mag of all selected frames by a percentage
-    draw:small_text(
-        grid_rect(0, top + 4.5, 1.5, Gui.SMALL_CONTROL_HEIGHT),
-        'end',
-        Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG')
-    )
-    scale_mag_val = ugui.numberbox({
-        uid = UID.ScaleMag,
-        rectangle = grid_rect(1.5, top + 4.5, 2.5, Gui.SMALL_CONTROL_HEIGHT),
-        value = scale_mag_val,
-        places = 3,
-        tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_TOOL_TIP'),
-    })
-    if scale_mag_val < 0 then scale_mag_val = 0 end
-    if scale_mag_val > 999 then scale_mag_val = 999 end
-    if ugui.button({
-            uid = UID.ScaleMag + 1,
-            rectangle = grid_rect(4, top + 4.5, 4, Gui.SMALL_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_APPLY'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_TOOL_TIP'),
-            is_enabled = scale_mag_val ~= 100,
-        }) then
-        sheet:push_undo_state()
-        local factor = scale_mag_val / 100.0
-        for _, sec in pairs(sheet.sections) do
-            if not sec.locked then
-                for _, inp in pairs(sec.inputs) do
-                    if inp.editing then
-                        inp.tas_state.goal_mag = math.max(0, math.min(127, math.floor(inp.tas_state.goal_mag * factor + 0.5)))
-                    end
-                end
-            end
-        end
-        sheet:run_to_preview()
-    end
-
-    -- Batch button toggles: toggle A/B/Z/Start/L/R on all selected frames at once
+    -- A/B/Z/S/L/R toggles at top+3.5 (cols 0-6); Framewalk (6-7), Swim (7-8)
     local BATCH_JOY_KEYS <const> = { 'A', 'B', 'Z', 'start', 'L', 'R' }
     local BATCH_JOY_LABELS <const> = { 'A', 'B', 'Z', 'S', 'L', 'R' }
-    local batch_btn_w = 8 / #BATCH_JOY_KEYS
     for bi, btn_key in ipairs(BATCH_JOY_KEYS) do
         local all_on = true
         local any_sel = false
@@ -1539,7 +1281,7 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
         end
         local new_checked = ugui.toggle_button({
             uid = UID.BatchButton + (bi - 1),
-            rectangle = grid_rect((bi - 1) * batch_btn_w, top + 5, batch_btn_w, Gui.SMALL_CONTROL_HEIGHT),
+            rectangle = grid_rect((bi - 1) * 1.0, top + 3.5, 1.0, Gui.SMALL_CONTROL_HEIGHT),
             text = BATCH_JOY_LABELS[bi],
             tooltip = string.format(Locales.str('SEMANTIC_WORKFLOW_CONTROL_BATCH_BUTTON_TOOL_TIP'), BATCH_JOY_LABELS[bi]),
             is_checked = any_sel and all_on,
@@ -1559,7 +1301,20 @@ local function joystick_controls_for_selected(draw, edited_section, edited_input
         end
     end
 
-    atan_controls(draw, sheet, new_values, top + 5.5)
+    -- Framewalk and Swim: end of batch-button row (cols 6-7, 7-8)
+    new_values.framewalk = ugui.toggle_button({
+        uid = UID.Framewalk,
+        rectangle = grid_rect(6, top + 3.5, 1, Gui.SMALL_CONTROL_HEIGHT),
+        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK'),
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FRAMEWALK_TOOL_TIP'),
+        is_checked = new_values.framewalk,
+    })
+    new_values.swim = ugui.toggle_button({
+        uid = UID.Swim,
+        rectangle = grid_rect(7, top + 3.5, 1, Gui.SMALL_CONTROL_HEIGHT),
+        text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SWIM'),
+        is_checked = new_values.swim,
+    })
 
     local changes = CloneInto(old_values, new_values)
     local any_changes = any_entries(changes)
@@ -1583,6 +1338,245 @@ end
 
 --#endregion
 
+--#region Batch Controls
+
+local function batch_controls_for_selected(draw, edited_section, edited_input)
+    if edited_section == nil or edited_input == nil then return end
+    local top = TOP
+    local sheet = SemanticWorkflowProject:asserted_current()
+
+    -- Info bar
+    local si = sheet.active_frame.section_index
+    local fi = sheet.active_frame.frame_index
+    local label_str = (edited_section.label and edited_section.label ~= '') and
+        ('  [' .. edited_section.label .. ']') or ''
+    local frame_count = #edited_section.inputs
+    local global_offset = 0
+    for j = 1, si - 1 do global_offset = global_offset + sheet.sections[j].timeout end
+    global_offset = global_offset + fi
+    draw:small_text(
+        grid_rect(0, top + Gui.MEDIUM_CONTROL_HEIGHT, 6, 1 - Gui.MEDIUM_CONTROL_HEIGHT),
+        'start',
+        string.format('S:%d/%d  F:%d/%d  GF:%d%s', si, #sheet.sections, fi, frame_count, global_offset, label_str)
+    )
+
+    local new_values = {}
+    local old_values = edited_input.tas_state
+    CloneInto(new_values, old_values)
+
+    -- Row top+1: Yaw->sel (0-4) | From game (4-8)
+    if ugui.button({
+            uid = UID.SetAngleFromGame,
+            rectangle = grid_rect(0, top + 1, 4, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_ANGLE_FROM_GAME'),
+            tooltip = string.format('%s  [%d]', Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_ANGLE_FROM_GAME_TOOL_TIP'), Memory.current.mario_facing_yaw or 0),
+        }) then
+        sheet:push_undo_state()
+        local yaw = Memory.current.mario_facing_yaw or 0
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.tas_state.goal_angle = yaw % 65536
+                        inp.tas_state.movement_mode = MovementModes.match_angle
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.CopyFromGame,
+            rectangle = grid_rect(4, top + 1, 4, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FROM_GAME'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_COPY_FROM_GAME_TOOL_TIP'),
+        }) then
+        local capture = ugui.internal.deep_clone(Joypad.input)
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.joy = ugui.internal.deep_clone(capture)
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+
+    -- Row top+1.5: Flip X | Flip Y | Mag->all (8/3 cols each)
+    local third = 8 / 3
+    if ugui.button({
+            uid = UID.FlipX,
+            rectangle = grid_rect(0, top + 1.5, third, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_X_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.tas_state.manual_joystick_x = -inp.tas_state.manual_joystick_x
+                        if inp.joy and inp.joy.X then inp.joy.X = -inp.joy.X end
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.FlipY,
+            rectangle = grid_rect(third, top + 1.5, third, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_FLIP_Y_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.tas_state.manual_joystick_y = -inp.tas_state.manual_joystick_y
+                        if inp.joy and inp.joy.Y then inp.joy.Y = -inp.joy.Y end
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.SetMagAll,
+            rectangle = grid_rect(third * 2, top + 1.5, third, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SET_MAG_ALL_TOOL_TIP'),
+        }) then
+        sheet:push_undo_state()
+        local mag = old_values.goal_mag
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then inp.tas_state.goal_mag = mag end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+
+    -- Row top+2: delta-angle label | numberbox | apply | snap
+    draw:small_text(
+        grid_rect(0, top + 2, 1.5, Gui.SMALL_CONTROL_HEIGHT),
+        'end',
+        Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET')
+    )
+    angle_offset_val = ugui.numberbox({
+        uid = UID.AngleOffset,
+        rectangle = grid_rect(1.5, top + 2, 2.5, Gui.SMALL_CONTROL_HEIGHT),
+        value = angle_offset_val,
+        places = 5,
+    })
+    if ugui.button({
+            uid = UID.AngleOffset + 1,
+            rectangle = grid_rect(4, top + 2, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_OFFSET_APPLY_TOOL_TIP'),
+            is_enabled = angle_offset_val ~= 0,
+        }) then
+        sheet:push_undo_state()
+        local offset = math.floor(angle_offset_val) % 65536
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.tas_state.goal_angle = (inp.tas_state.goal_angle + offset) % 65536
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+    if ugui.button({
+            uid = UID.AngleOffset + 2,
+            rectangle = grid_rect(6, top + 2, 2, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_ANGLE_SNAP_TOOL_TIP'),
+            is_enabled = angle_offset_val ~= 0,
+        }) then
+        sheet:push_undo_state()
+        local snap = math.abs(math.floor(angle_offset_val))
+        if snap > 0 then
+            for _, sec in pairs(sheet.sections) do
+                if not sec.locked then
+                    for _, inp in pairs(sec.inputs) do
+                        if inp.editing then
+                            inp.tas_state.goal_angle = (math.floor(inp.tas_state.goal_angle / snap + 0.5) * snap) % 65536
+                        end
+                    end
+                end
+            end
+            sheet:run_to_preview()
+        end
+    end
+
+    -- Row top+2.5: Mag% label | numberbox | scale->sel
+    draw:small_text(
+        grid_rect(0, top + 2.5, 1.5, Gui.SMALL_CONTROL_HEIGHT),
+        'end',
+        Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG')
+    )
+    scale_mag_val = ugui.numberbox({
+        uid = UID.ScaleMag,
+        rectangle = grid_rect(1.5, top + 2.5, 2.5, Gui.SMALL_CONTROL_HEIGHT),
+        value = scale_mag_val,
+        places = 3,
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_TOOL_TIP'),
+    })
+    if scale_mag_val < 0 then scale_mag_val = 0 end
+    if scale_mag_val > 999 then scale_mag_val = 999 end
+    if ugui.button({
+            uid = UID.ScaleMag + 1,
+            rectangle = grid_rect(4, top + 2.5, 4, Gui.SMALL_CONTROL_HEIGHT),
+            text = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_APPLY'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_CONTROL_SCALE_MAG_TOOL_TIP'),
+            is_enabled = scale_mag_val ~= 100,
+        }) then
+        sheet:push_undo_state()
+        local factor = scale_mag_val / 100.0
+        for _, sec in pairs(sheet.sections) do
+            if not sec.locked then
+                for _, inp in pairs(sec.inputs) do
+                    if inp.editing then
+                        inp.tas_state.goal_mag = math.max(0, math.min(127, math.floor(inp.tas_state.goal_mag * factor + 0.5)))
+                    end
+                end
+            end
+        end
+        sheet:run_to_preview()
+    end
+
+    -- Atan controls at top+3
+    atan_controls(draw, sheet, new_values, top + 3)
+
+    local changes = CloneInto(old_values, new_values)
+    local any_changes = any_entries(changes)
+    local current_sheet = SemanticWorkflowProject:asserted_current()
+    if any_changes and edited_input then
+        for _, section in pairs(sheet.sections) do
+            if not section.locked then
+                for _, input in pairs(section.inputs) do
+                    if input.editing then
+                        CloneInto(input.tas_state, Settings.semantic_workflow.edit_entire_state and old_values or changes)
+                    end
+                end
+            end
+        end
+    end
+    if any_changes then
+        current_sheet:run_to_preview()
+    end
+end
+
+--#endregion
+
 --#endregion
 
 function __impl.render(draw)
@@ -1593,13 +1587,12 @@ function __impl.render(draw)
     FrameListGui.view_index = selected_view_index
     FrameListGui.render(draw)
 
-    -- view 3 (Numeric) reuses joystick controls at the bottom
-    local draw_funcs = { joystick_controls_for_selected, section_controls_for_selected, joystick_controls_for_selected }
+    local draw_funcs = { joystick_controls_for_selected, section_controls_for_selected, batch_controls_for_selected }
     selected_view_index = ugui.carrousel_button({
         uid = UID.ViewCarrousel,
         rectangle = grid_rect(6, TOP, 2, Gui.MEDIUM_CONTROL_HEIGHT),
         value = selected_view_index,
-        items = { 'Joystick', 'Section', 'Numeric' },
+        items = { 'Joystick', 'Section', 'Batch' },
         selected_index = selected_view_index,
     })
 
