@@ -32,6 +32,9 @@ function cls_project:add_sheet() end
 ---@param index number The 1-based index of the sheet to remove - must be within the range of [1; #meta.sheets].
 function cls_project:remove_sheet(index) end
 
+--Duplicate the sheet at the provided index, adding the duplicate to the end of the sheet list.
+function __impl:duplicate_sheet(index) end
+
 ---Moves the sheet at the provided index up or down in the list of sheets
 ---@param index number The 1-based index of the sheet to move, such that moving it by "sign" will keep it in the range of [1; #meta.sheets].
 ---@param sign number +1 to move the sheet down, or -1 to move the sheet up
