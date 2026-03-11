@@ -33,7 +33,7 @@ function cls_project:add_sheet() end
 function cls_project:remove_sheet(index) end
 
 --Duplicate the sheet at the provided index, adding the duplicate to the end of the sheet list.
-function __impl:duplicate_sheet(index) end
+function cls_project:duplicate_sheet(index) end
 
 ---Moves the sheet at the provided index up or down in the list of sheets
 ---@param index number The 1-based index of the sheet to move, such that moving it by "sign" will keep it in the range of [1; #meta.sheets].

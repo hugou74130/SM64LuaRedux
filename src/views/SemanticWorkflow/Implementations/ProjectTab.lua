@@ -286,7 +286,7 @@ function __impl.render(draw)
             SemanticWorkflowDialog = render_confirm_deletion_prompt(i)
         end
 
-        if (draw_utility_button('' .. Locales.str('SEMANTIC_WORKFLOW_PROJECT_DUPLICATE_SHEET_TOOL_TIP'))) then
+        if (draw_utility_button('cp' .. Locales.str('SEMANTIC_WORKFLOW_PROJECT_DUPLICATE_SHEET_TOOL_TIP'))) then
             SemanticWorkflowProject:duplicate_sheet(i)
         end
 
