@@ -40,6 +40,7 @@ function __impl.new()
         remove_sheet = __impl.remove_sheet,
         select = __impl.select,
         rebase = __impl.rebase,
+        move_sheet = __impl.move_sheet,
         duplicate_sheet = __impl.duplicate_sheet,
     }
 end
@@ -77,12 +78,27 @@ end
 
 function __impl:duplicate_sheet(index)
     local sheet_to_duplicate = self.meta.sheets[index]
+    if not sheet_to_duplicate then error('invalid sheet index',2) end
+
     self.meta.created_sheet_count = self.meta.created_sheet_count + 1
     local new_sheet_name = 'Sheet ' .. self.meta.created_sheet_count
-    local new_sheet = Sheet.new(new_sheet_name, false)
-    new_sheet:copy_from(self.all[sheet_to_duplicate.name])
+
+    local orig = self.all[sheet_to_duplicate.name]
+    local new_sheet = ugui.internal.deep_clone(orig)
+    new_sheet.name = new_sheet_name
+    new_sheet.busy = false
+    new_sheet._section_index = 1
+    new_sheet._frame_counter = 1
+    new_sheet._on_preview_frame_reached = nil
+    if orig._base_sheet then
+        new_sheet._base_sheet = orig._base_sheet
+    end
+
     self.all[new_sheet_name] = new_sheet
-    self.meta.sheets[#self.meta.sheets + 1] = new_sheet_meta(new_sheet_name)
+    table.insert(self.meta.sheets, index + 1, new_sheet_meta(new_sheet_name))
+
+    -- select the copied sheet
+    self:select(index + 1)
 end
 
 function __impl:set_current_name(name)
