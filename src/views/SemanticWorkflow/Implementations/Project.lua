@@ -74,6 +74,16 @@ function __impl:move_sheet(index, sign)
     self.meta.sheets[index + sign] = tmp
 end
 
+function __impl:duplicate_sheet(index)
+    local sheet_to_duplicate = self.meta.sheets[index]
+    self.meta.created_sheet_count = self.meta.created_sheet_count + 1
+    local new_sheet_name = 'Sheet ' .. self.meta.created_sheet_count
+    local new_sheet = Sheet.new(new_sheet_name, false)
+    new_sheet:copy_from(self.all[sheet_to_duplicate.name])
+    self.all[new_sheet_name] = new_sheet
+    self.meta.sheets[#self.meta.sheets + 1] = new_sheet_meta(new_sheet_name)
+end
+
 function __impl:set_current_name(name)
     local current_sheet_meta = self.meta.sheets[self.meta.selection_index]
 
