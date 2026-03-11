@@ -40,6 +40,7 @@ function __impl.new()
         remove_sheet = __impl.remove_sheet,
         select = __impl.select,
         rebase = __impl.rebase,
+        duplicate_sheet = __impl.duplicate_sheet,
     }
 end
 
