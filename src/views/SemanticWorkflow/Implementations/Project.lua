@@ -41,6 +41,7 @@ function __impl.new()
         move_sheet = __impl.move_sheet,
         select = __impl.select,
         rebase = __impl.rebase,
+        duplicate = __impl.duplicate,
     }
 end
 
@@ -73,6 +74,13 @@ function __impl:move_sheet(index, sign)
     local tmp = self.meta.sheets[index]
     self.meta.sheets[index] = self.meta.sheets[index + sign]
     self.meta.sheets[index + sign] = tmp
+end
+
+function __impl:duplicate(index)
+-- duplicate 
+
+
+
 end
 
 function __impl:set_current_name(name)
