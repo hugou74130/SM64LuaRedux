@@ -36,6 +36,17 @@ end)
 local selecting_sheet_base_for = nil
 local function main_gui_enabled() return selecting_sheet_base_for == nil end
 
+---Returns true if any sheet in the project is currently busy (running to its preview frame).
+local function any_sheet_busy()
+    for _, sheet_meta in ipairs(SemanticWorkflowProject.meta.sheets) do
+        local sheet = SemanticWorkflowProject.all[sheet_meta.name]
+        if sheet and sheet.busy then
+            return true
+        end
+    end
+    return false
+end
+
 local function create_confirm_dialog(prompt, on_confirmed)
     return function()
         local top = 15 - Gui.MEDIUM_CONTROL_HEIGHT
@@ -270,13 +281,14 @@ function __impl.render(draw)
 
         local function draw_utility_toggle_button(args)
             local width = args.width or 0.5
+            local enabled = args.enabled == nil or args.enabled
             local result = ugui.toggle_button({
                 uid = uid,
                 rectangle = grid_rect(x, y, width, Gui.MEDIUM_CONTROL_HEIGHT),
                 text = args.text,
                 tooltip = args.tooltip,
                 is_checked = args.toggled,
-                is_enabled = args.override_enable or main_gui_enabled(),
+                is_enabled = enabled and (args.override_enable or main_gui_enabled()),
                 styler_mixin = args.styler_mixin,
             })
             uid = uid + 1
@@ -286,15 +298,17 @@ function __impl.render(draw)
 
         local icon_mixin = { icon_size = 12 }
 
-        if (draw_utility_button({ text = '[icon:arrow_up]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_MOVE_SHEET_UP_TOOL_TIP'), enabled = i > 1, styler_mixin = icon_mixin })) then
+        local busy = any_sheet_busy()
+
+        if (draw_utility_button({ text = '[icon:arrow_up]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_MOVE_SHEET_UP_TOOL_TIP'), enabled = i > 1 and not busy, styler_mixin = icon_mixin })) then
             SemanticWorkflowProject:move_sheet(i, -1)
         end
 
-        if (draw_utility_button({ text = '[icon:arrow_down]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_MOVE_SHEET_DOWN_TOOL_TIP'), enabled = i < #SemanticWorkflowProject.meta.sheets, styler_mixin = icon_mixin })) then
+        if (draw_utility_button({ text = '[icon:arrow_down]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_MOVE_SHEET_DOWN_TOOL_TIP'), enabled = i < #SemanticWorkflowProject.meta.sheets and not busy, styler_mixin = icon_mixin })) then
             SemanticWorkflowProject:move_sheet(i, 1)
         end
 
-        if (draw_utility_button({ text = '[icon:delete]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_DELETE_SHEET_TOOL_TIP'), styler_mixin = icon_mixin })) then
+        if (draw_utility_button({ text = '[icon:delete]', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_DELETE_SHEET_TOOL_TIP'), enabled = not busy, styler_mixin = icon_mixin })) then
             SemanticWorkflowDialog = render_confirm_deletion_prompt(i)
         end
 
@@ -307,7 +321,7 @@ function __impl.render(draw)
             tooltip = sheet._base_sheet ~= nil and (Locales.str('SEMANTIC_WORKFLOW_PROJECT_BASE_SHEET_TOOL_TIP') .. sheet._base_sheet.name) or Locales.str('SEMANTIC_WORKFLOW_PROJECT_NO_BASE_SHEET_TOOL_TIP'),
             toggled = sheet._base_sheet ~= nil,
             width = 0.75,
-            override_enable = selecting_sheet_base_for == i,
+            override_enable = selecting_sheet_base_for == i and not busy,
             styler_mixin = icon_mixin,
         })) then
             if selecting_sheet_base_for ~= i then
@@ -317,11 +331,11 @@ function __impl.render(draw)
             end
         end
 
-        if (draw_utility_toggle_button({ text = '.st', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_REBASE_SHEET_TOOL_TIP'), toggled = sheet._base_sheet == nil, width = 0.75 })) then
+        if (draw_utility_toggle_button({ text = '.st', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_REBASE_SHEET_TOOL_TIP'), toggled = sheet._base_sheet == nil, enabled = not busy, width = 0.75 })) then
             SemanticWorkflowProject:rebase(i)
         end
 
-        if (draw_utility_button({ text = '.sws', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_REPLACE_INPUTS_TOOL_TIP'), enabled = true, width = 0.75 })) then
+        if (draw_utility_button({ text = '.sws', tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_REPLACE_INPUTS_TOOL_TIP'), enabled = not busy, width = 0.75 })) then
             local path = iohelper.filediag('*.sws', 0)
             if string.len(path) > 0 then
                 sheet:load(path, false)
