@@ -145,4 +145,18 @@ WorldVisualizer.draw = function()
     end
 
     draw_moved_dist()
+
+    local ghost_pos = Ghost.get_replay_position(Memory.current.mario_global_timer)
+    if ghost_pos then
+        local p = project(ghost_pos)
+        if is_inside_frustum(p) then
+            local offset = 30000 / p.z
+            BreitbandGraphics.fill_ellipse({
+                x = math.floor(p.x - offset / 2),
+                y = math.floor(p.y - offset / 2),
+                width = math.floor(offset),
+                height = math.floor(offset),
+            }, { r = 0, g = 128, b = 255, a = 160 })
+        end
+    end
 end

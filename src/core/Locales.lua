@@ -143,6 +143,9 @@ Locales = {}
 ---@field public TOOLS_GHOST_STOP string
 ---@field public TOOLS_GHOST_START_RECORDING_FAILED string
 ---@field public TOOLS_GHOST_STOP_RECORDING_FAILED string
+---@field public TOOLS_GHOST_START_REPLAY string
+---@field public TOOLS_GHOST_STOP_REPLAY string
+---@field public TOOLS_GHOST_LOAD_REPLAY_FAILED string
 ---@field public TOOLS_TRACKERS string
 ---@field public TOOLS_OVERLAYS string
 ---@field public TOOLS_AUTOMATION string

@@ -24,6 +24,24 @@ local frame = 0
 local recording_base_frame = nil
 local last_global_timer = nil
 
+---@type GhostFrame[]
+local replay_frames = {}
+local is_replaying = false
+
+local function u32_to_float(n)
+    return string.unpack('<f', string.pack('<I4', n))
+end
+
+local function read_u32(data, offset)
+    local b1, b2, b3, b4 = data:byte(offset, offset + 3)
+    return b1 | (b2 << 8) | (b3 << 16) | (b4 << 24)
+end
+
+local function read_u16(data, offset)
+    local b1, b2 = data:byte(offset, offset + 1)
+    return b1 | (b2 << 8)
+end
+
 local OBJ_POSITION_OFFSET <const> = 0x20
 local OBJ_ANIMATION_OFFSET <const> = 0x38
 local OBJ_ANIMATION_TIMER_OFFSET <const> = 0x40
@@ -161,4 +179,74 @@ end
 ---@nodiscard
 function Ghost.recording()
 	return is_recording
+end
+
+---Loads a ghost file for replay.
+---@param path string The path to the ghost file.
+---@return boolean # Whether the operation succeeded.
+---@nodiscard
+function Ghost.load_replay(path)
+    local file = io.open(path, 'rb')
+    if not file then
+        return false
+    end
+
+    local data = file:read('*a')
+    file:close()
+
+    if #data < 8 then
+        return false
+    end
+
+    local base_frame = read_u32(data, 1)
+    local frame_count = read_u32(data, 5)
+
+    replay_frames = {}
+    local offset = 9
+    for _ = 1, frame_count do
+        if offset + 31 > #data then break end
+        replay_frames[#replay_frames + 1] = {
+            global_timer = base_frame + read_u32(data, offset),
+            x = u32_to_float(read_u32(data, offset + 4)),
+            y = u32_to_float(read_u32(data, offset + 8)),
+            z = u32_to_float(read_u32(data, offset + 12)),
+        }
+        offset = offset + 32
+    end
+
+    is_replaying = #replay_frames > 0
+    return is_replaying
+end
+
+---Stops the ghost replay.
+function Ghost.stop_replay()
+    replay_frames = {}
+    is_replaying = false
+end
+
+---@return boolean # Whether a ghost is being replayed.
+---@nodiscard
+function Ghost.replaying()
+    return is_replaying
+end
+
+---Returns the ghost position for the given global timer, or nil if not found.
+---@param global_timer integer
+---@return {x: number, y: number, z: number}?
+function Ghost.get_replay_position(global_timer)
+    if not is_replaying then
+        return nil
+    end
+    local lo, hi = 1, #replay_frames
+    while lo < hi do
+        local mid = (lo + hi) >> 1
+        if replay_frames[mid].global_timer < global_timer then
+            lo = mid + 1
+        else
+            hi = mid
+        end
+    end
+    local f = replay_frames[lo]
+    if f == nil then return nil end
+    return { x = f.x, y = f.y, z = f.z }
 end

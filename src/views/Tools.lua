@@ -18,6 +18,7 @@ local UID = UIDProvider.allocate_once('Tools', function(enum_next)
         RngValue = enum_next(4),
         Dump = enum_next(),
         RecordGhost = enum_next(),
+    PlayGhost = enum_next(),
         WorldVisualizer = enum_next(),
         AutoFirsties = enum_next(),
         MiniVisualizer = enum_next(),
@@ -121,6 +122,21 @@ return {
 
                 if not result then
                     print(Locales.str('TOOLS_GHOST_START_RECORDING_FAILED'))
+                end
+            end
+        end
+
+        if ugui.button({
+                uid = UID.PlayGhost,
+                rectangle = grid_rect(4, GHOST_ROW, 4, 1),
+                text = Ghost.replaying() and Locales.str('TOOLS_GHOST_STOP_REPLAY') or Locales.str('TOOLS_GHOST_START_REPLAY'),
+            }) then
+            if Ghost.replaying() then
+                Ghost.stop_replay()
+            else
+                local result = Ghost.load_replay(Settings.ghost_path)
+                if not result then
+                    print(Locales.str('TOOLS_GHOST_LOAD_REPLAY_FAILED'))
                 end
             end
         end
