@@ -155,6 +155,8 @@ end
 --#region Section controls
 
 local end_action_search_text = nil
+local end_action_last_sheet = nil
+local end_action_last_section_index = nil
 
 local function controls_for_end_action(section, draw, column, top)
     draw:text(grid_rect(column, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
@@ -167,35 +169,34 @@ local function controls_for_end_action(section, draw, column, top)
                 tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TOOL_TIP'),
             }) then
             end_action_search_text = ''
-            ugui.internal.keyboard_captured_control = UID.EndActionTextbox
-            ugui.internal.clear_active_control_after_mouse_up = false
         end
+        return
     end
-    if end_action_search_text ~= nil then
-        -- end action "dropdown" is visible
-        end_action_search_text = ugui.textbox({
-            uid = UID.EndActionTextbox,
-            rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = end_action_search_text,
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TYPE_TO_SEARCH_TOOL_TIP'),
-        }):lower()
-        local i = 0
-        local match_pattern = '^' .. end_action_search_text
-        for action, action_name in pairs(Locales.raw().ACTIONS) do
-            if action_name:find(match_pattern) ~= nil then
-                if ugui.button({
-                        uid = UID.AvailableActions + i,
-                        rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
-                        text = action_name,
-                    }) then
-                    end_action_search_text = nil
-                    section.end_action = action
-                    any_changes = true
-                end
 
-                i = i + 1
-                if (i >= MAX_ACTION_GUESSES) then break end
+    -- end action "dropdown" is visible
+    ugui.internal.keyboard_captured_control = UID.EndActionTextbox
+    end_action_search_text = ugui.textbox({
+        uid = UID.EndActionTextbox,
+        rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+        text = end_action_search_text,
+        tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TYPE_TO_SEARCH_TOOL_TIP'),
+    }):lower()
+    local i = 0
+    local match_pattern = '^' .. end_action_search_text
+    for action, action_name in pairs(Locales.raw().ACTIONS) do
+        if action_name:find(match_pattern) ~= nil then
+            if ugui.button({
+                    uid = UID.AvailableActions + i,
+                    rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
+                    text = action_name,
+                }) then
+                end_action_search_text = nil
+                section.end_action = action
+                any_changes = true
             end
+
+            i = i + 1
+            if (i >= MAX_ACTION_GUESSES) then break end
         end
     end
 end
@@ -544,6 +545,12 @@ function __impl.render(draw)
     local sheet = SemanticWorkflowProject:asserted_current()
     local edited_section = sheet.sections[sheet.active_frame.section_index]
     local edited_input = edited_section and edited_section.inputs[sheet.active_frame.frame_index] or nil
+
+    if sheet ~= end_action_last_sheet or sheet.active_frame.section_index ~= end_action_last_section_index then
+        end_action_search_text = nil
+        end_action_last_section_index = sheet.active_frame.section_index
+        end_action_last_sheet = sheet
+    end
 
     FrameListGui.view_index = selected_view_index
     FrameListGui.render(draw)
