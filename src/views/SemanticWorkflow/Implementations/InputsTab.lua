@@ -151,10 +151,9 @@ end
 
 --#endregion
 
---#region Section controls
+--#region Timeout and end condition controls
 
-
-local function controls_for_end_action(section, draw, column, top)
+local function controls_for_end_action(input, draw, column, top)
     draw:text(grid_rect(column, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
 
     local values = {}
@@ -163,11 +162,11 @@ local function controls_for_end_action(section, draw, column, top)
     for key, value in pairs(Locales.raw().ACTIONS) do
         values[#values+1] = value
         keys[#keys+1] = key
-        if key == section.end_action then
+        if key == input.end_action then
             selected_index = #values
         end
     end
-    section.end_action = keys[ugui.combobox({
+    input.end_action = keys[ugui.combobox({
         items = values,
         rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
         editable = true,
@@ -176,7 +175,7 @@ local function controls_for_end_action(section, draw, column, top)
     })]
 end
 
-local function section_controls_for_selected(draw, edited_section, edited_input)
+local function section_controls_for_selected(draw, edited_input)
     local sheet = SemanticWorkflowProject:asserted_current()
 
     local top = TOP
@@ -184,22 +183,22 @@ local function section_controls_for_selected(draw, edited_section, edited_input)
 
     local any_changes = false
 
-    if edited_section == nil then return end
+    if edited_input == nil then return end
 
     top = top + 1
 
     draw:text(grid_rect(col_timeout, top, 2, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT'))
-    local old_timeout = edited_section.timeout
-    edited_section.timeout = ugui.numberbox({
+    local old_timeout = edited_input.timeout
+    edited_input.timeout = ugui.numberbox({
         uid = UID.Timeout,
         rectangle = grid_rect(col_timeout, top + LABEL_HEIGHT, 2, Gui.MEDIUM_CONTROL_HEIGHT),
-        value = edited_section.timeout,
+        value = edited_input.timeout,
         places = 4,
         tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_TIMEOUT_TOOL_TIP'),
     })
-    any_changes = any_changes or old_timeout ~= edited_section.timeout
+    any_changes = any_changes or old_timeout ~= edited_input.timeout
 
-    controls_for_end_action(edited_section, draw, 0, top)
+    controls_for_end_action(edited_input, draw, 0, top)
 
     if any_changes then
         sheet:run_to_preview()
@@ -476,7 +475,7 @@ local function upper_controls(new_values, top)
     })
 end
 
-local function joystick_controls_for_selected(draw, edited_section, edited_input)
+local function joystick_controls_for_selected(draw, edited_input)
     local top = TOP
 
     local sheet = SemanticWorkflowProject:asserted_current()
@@ -533,6 +532,6 @@ function __impl.render(draw)
         selected_index = selected_view_index,
     })
 
-    draw_funcs[selected_view_index](draw, edited_section, edited_input)
+    draw_funcs[selected_view_index](draw, edited_input)
     controls_for_insert_and_remove()
 end
