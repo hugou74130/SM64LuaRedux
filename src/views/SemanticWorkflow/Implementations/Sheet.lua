@@ -20,7 +20,7 @@ function __impl.new(name, create_savestate)
         version = SEMANTIC_WORKFLOW_FILE_VERSION,
         preview_frame = { section_index = 1, frame_index = 1 },
         active_frame = { section_index = 1, frame_index = 1 },
-        sections = { Section.new(0x0C400201, Settings.semantic_workflow.default_section_timeout) }, -- end action is "idle"
+        sections = { Section.new() },
         name = name,
         busy = false,
         _savestate = nil,
@@ -28,7 +28,8 @@ function __impl.new(name, create_savestate)
         _invalidated = true,
         _rebasing = false,
         _section_index = 1,
-        _frame_counter = 1,
+        _input_counter = 0,
+        _frame_counter = 0,
         evaluate_frame = __impl.evaluate_frame,
         run_to_preview = __impl.run_to_preview,
         rebase = __impl.rebase,
@@ -52,10 +53,18 @@ function __impl:evaluate_frame()
     local section = self.sections[self._section_index]
     if section == nil then return nil end
 
+    local input = section.inputs[self._input_index]
+
     local current_action = Memory.current.mario_action
-    if self._frame_counter >= section.timeout or current_action == section.end_action then
-        self._section_index = self._section_index + 1
-        self._frame_counter = 0
+    if (input.timeout and self._frame_counter >= input.timeout)
+        or current_action == input.end_action
+    then
+        self._input_index = self._input_index + 1
+        if #section.inputs < self._input_index then
+            self._section_index = self._section_index + 1
+            self._frame_counter = 0
+            self._input_index = 1
+        end
     end
     if self._section_index > self.preview_frame.section_index
         or (self._section_index == self.preview_frame.section_index
@@ -79,7 +88,7 @@ function __impl:evaluate_frame()
 
     self._frame_counter = self._frame_counter + 1
     section = self.sections[self._section_index]
-    return section and section.inputs[math.min(self._frame_counter, #section.inputs)] or nil
+    return section and section.inputs[math.min(self._input_index, #section.inputs)] or nil
 end
 
 ---@param sheet Sheet
@@ -114,6 +123,7 @@ local function run_to_preview_internal(sheet, from_base)
     end
 
     sheet._section_index = 1
+    sheet._input_index = 1
     sheet._frame_counter = 1
 end
 
@@ -152,6 +162,11 @@ function __impl:load(file, load_state)
             self._savestate = ReadAll(file .. '.savestate')
         end
         CloneInto(self, contents)
+        for _, section in pairs(self.sections) do
+            for _, input in pairs(section.inputs) do
+                input.timeout = input.timeout or 1 -- convert sheets pre 2.0.0
+            end
+        end
     end
 end
 
