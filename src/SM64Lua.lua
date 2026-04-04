@@ -345,6 +345,7 @@ local function at_loadstate()
     -- What do we do at this point, leave it like this and let the engine calculate wrong diffs, or copy current state to previous one?
     Memory.update()
     Memory.update_previous()
+    Ghost.on_loadstate()
 end
 
 emu.atloadstate(at_loadstate)
