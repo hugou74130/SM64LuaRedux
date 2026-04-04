@@ -7,9 +7,10 @@
 local RNG_ROW = 1
 local DUMPING_ROW = 3
 local GHOST_ROW = 5
-local TRACKERS_ROW = 7
-local OVERLAYS_ROW = 9
-local AUTOMATION_ROW = 11
+local GHOST_COLOR_ROW = 6
+local TRACKERS_ROW = 8
+local OVERLAYS_ROW = 10
+local AUTOMATION_ROW = 12
 
 local UID = UIDProvider.allocate_once('Tools', function(enum_next)
     return {
@@ -18,7 +19,8 @@ local UID = UIDProvider.allocate_once('Tools', function(enum_next)
         RngValue = enum_next(4),
         Dump = enum_next(),
         RecordGhost = enum_next(),
-    PlayGhost = enum_next(),
+        PlayGhost = enum_next(),
+        GhostColorR = enum_next(3),
         WorldVisualizer = enum_next(),
         AutoFirsties = enum_next(),
         MiniVisualizer = enum_next(),
@@ -140,6 +142,43 @@ return {
                 end
             end
         end
+
+        BreitbandGraphics.draw_text(
+            grid_rect(0, GHOST_COLOR_ROW, 0.5, 1),
+            'start', 'center',
+            { aliased = not theme.cleartype },
+            foreground_color, theme.font_size * Drawing.scale, theme.font_name,
+            'R')
+        Settings.ghost_color[1] = math.max(0, math.min(255, math.floor(ugui.numberbox({
+            uid = UID.GhostColorR,
+            rectangle = grid_rect(0.5, GHOST_COLOR_ROW, 2, 1),
+            places = 3,
+            value = Settings.ghost_color[1],
+        }))))
+        BreitbandGraphics.draw_text(
+            grid_rect(2.75, GHOST_COLOR_ROW, 0.5, 1),
+            'start', 'center',
+            { aliased = not theme.cleartype },
+            foreground_color, theme.font_size * Drawing.scale, theme.font_name,
+            'G')
+        Settings.ghost_color[2] = math.max(0, math.min(255, math.floor(ugui.numberbox({
+            uid = UID.GhostColorR + 1,
+            rectangle = grid_rect(3.25, GHOST_COLOR_ROW, 2, 1),
+            places = 3,
+            value = Settings.ghost_color[2],
+        }))))
+        BreitbandGraphics.draw_text(
+            grid_rect(5.5, GHOST_COLOR_ROW, 0.5, 1),
+            'start', 'center',
+            { aliased = not theme.cleartype },
+            foreground_color, theme.font_size * Drawing.scale, theme.font_name,
+            'B')
+        Settings.ghost_color[3] = math.max(0, math.min(255, math.floor(ugui.numberbox({
+            uid = UID.GhostColorR + 2,
+            rectangle = grid_rect(6, GHOST_COLOR_ROW, 2, 1),
+            places = 3,
+            value = Settings.ghost_color[3],
+        }))))
 
         BreitbandGraphics.draw_text(
             grid_rect(0, TRACKERS_ROW - 1, 8, 1),

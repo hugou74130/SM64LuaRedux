@@ -42,6 +42,7 @@ Settings = {
     override_rng_value = 0,
     show_effective_angles = true,
     ghost_path = folder .. 'recording.ghost',
+    ghost_color = {255, 0, 0},
     grid_size = 35,
     grid_gap = 2,
     track_moved_distance = false,

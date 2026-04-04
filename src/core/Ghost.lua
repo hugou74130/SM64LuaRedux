@@ -173,7 +173,7 @@ end
 local function update_hack_replay()
     memory.writebyte(0x80407FFF, 1)
     -- Write Mario's hat color (ghost index 0)
-    write_ghost_color_to_stream(0, {255, 0, 0})
+    write_ghost_color_to_stream(0, {255, 0, 0}) -- Mario stays red
 
     local address_source = Addresses[Settings.address_source_index]
     local global_timer = memory.readdword(address_source.global_timer)
@@ -184,8 +184,8 @@ local function update_hack_replay()
         write_hack_ghost_frame(slot, get_hack_ghost_frame(i))
     end
 
-    -- Write ghost hat color (ghost index 1, default red)
-    write_ghost_color_to_stream(1, {255, 0, 0})
+    -- Write ghost hat color (ghost index 1, configurable)
+    write_ghost_color_to_stream(1, Settings.ghost_color)
     -- Set transparency
     local ptr = memory.readdword(0x80407FF8) + 0x61
     memory.writebyte(ptr, hack_transparent and 1 or 0)
