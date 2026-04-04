@@ -18,8 +18,8 @@ function __impl.new(name, create_savestate)
 
     local new_instance = {
         version = SEMANTIC_WORKFLOW_FILE_VERSION,
-        preview_frame = { section_index = 1, frame_index = 1 },
-        active_frame = { section_index = 1, frame_index = 1 },
+        preview_input = { section_index = 1, input_index = 1 },
+        active_input = { section_index = 1, input_index = 1 },
         sections = { Section.new() },
         name = name,
         busy = false,
@@ -59,26 +59,27 @@ function __impl:evaluate_frame()
     if (input.timeout and self._frame_counter >= input.timeout)
         or current_action == input.end_action
     then
+        print("switching after: " .. self._section_index .. ", " .. self._input_index .. ", " .. self._frame_counter)
         self._input_index = self._input_index + 1
+        self._frame_counter = 0
         if #section.inputs < self._input_index then
             self._section_index = self._section_index + 1
-            self._frame_counter = 0
             self._input_index = 1
         end
     end
-    if self._section_index > self.preview_frame.section_index
-        or (self._section_index == self.preview_frame.section_index
-            and self.preview_frame.frame_index
-            and self._frame_counter >= self.preview_frame.frame_index - 1
+    if self._section_index > self.preview_input.section_index
+        or (self._section_index == self.preview_input.section_index
+            and self.preview_input.input_index
+            and self._input_index >= self.preview_input.input_index
         ) then
-        if self._on_preview_frame_reached == nil then
+        if self._on_preview_input_reached == nil then
             -- we've reached the end, pause emulation
             emu.pause(false)
             emu.set_ff(false)
         else
             -- continue with the next sheet
-            local invocation = self._on_preview_frame_reached
-            self._on_preview_frame_reached = nil
+            local invocation = self._on_preview_input_reached
+            self._on_preview_input_reached = nil
 
             ---@diagnostic disable-next-line: need-check-nil -- trivially not nil here
             invocation()
@@ -100,7 +101,7 @@ local function run_to_preview_internal(sheet, from_base)
         if sheet._base_sheet ~= nil then
             if sheet._savestate == nil or sheet._base_sheet:invalidated() then
                 -- Run the sheet without loading a savestate because it's a continuation of its base sheet
-                sheet._base_sheet._on_preview_frame_reached = function()
+                sheet._base_sheet._on_preview_input_reached = function()
                     sheet._base_sheet._invalidated = false
                     savestate.do_memory('', 'save', function(result, data) sheet._savestate = data end)
                     sheet._section_index = 1
@@ -149,8 +150,8 @@ function __impl:save(file)
             version = self.version,
             sections = self.sections,
             name = self.name,
-            active_frame = self.active_frame,
-            preview_frame = self.preview_frame,
+            active_input = self.active_input,
+            preview_input = self.preview_input,
         })
     )
 end
