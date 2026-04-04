@@ -25,7 +25,6 @@ local Gui = dofile(views_path .. 'SemanticWorkflow/Definitions/Gui.lua')
 local LABEL_HEIGHT <const> = 0.25
 
 local TOP <const> = 10.25
-local MAX_ACTION_GUESSES <const> = 5
 
 --#endregion
 
@@ -154,50 +153,27 @@ end
 
 --#region Section controls
 
-local end_action_search_text = nil
 
 local function controls_for_end_action(section, draw, column, top)
     draw:text(grid_rect(column, top, 4, LABEL_HEIGHT), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION'))
-    if end_action_search_text == nil then
-        -- end action "dropdown" is not visible
-        if ugui.button({
-                uid = UID.EndAction,
-                rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
-                text = Locales.action(section.end_action),
-                tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TOOL_TIP'),
-            }) then
-            end_action_search_text = ''
-            ugui.internal.keyboard_captured_control = UID.EndActionTextbox
-            ugui.internal.clear_active_control_after_mouse_up = false
-        end
-    end
-    if end_action_search_text ~= nil then
-        -- end action "dropdown" is visible
-        end_action_search_text = ugui.textbox({
-            uid = UID.EndActionTextbox,
-            rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = end_action_search_text,
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_END_ACTION_TYPE_TO_SEARCH_TOOL_TIP'),
-        }):lower()
-        local i = 0
-        local match_pattern = '^' .. end_action_search_text
-        for action, action_name in pairs(Locales.raw().ACTIONS) do
-            if action_name:find(match_pattern) ~= nil then
-                if ugui.button({
-                        uid = UID.AvailableActions + i,
-                        rectangle = grid_rect(column, top + LABEL_HEIGHT + Gui.MEDIUM_CONTROL_HEIGHT + i * Gui.SMALL_CONTROL_HEIGHT, 4, Gui.SMALL_CONTROL_HEIGHT),
-                        text = action_name,
-                    }) then
-                    end_action_search_text = nil
-                    section.end_action = action
-                    any_changes = true
-                end
 
-                i = i + 1
-                if (i >= MAX_ACTION_GUESSES) then break end
-            end
+    local values = {}
+    local keys = {}
+    local selected_index = 1
+    for key, value in pairs(Locales.raw().ACTIONS) do
+        values[#values+1] = value
+        keys[#keys+1] = key
+        if key == section.end_action then
+            selected_index = #values
         end
     end
+    section.end_action = keys[ugui.combobox({
+        items = values,
+        rectangle = grid_rect(column, top + LABEL_HEIGHT, 4, Gui.MEDIUM_CONTROL_HEIGHT),
+        editable = true,
+        uid = UID.EndAction,
+        selected_index = selected_index,
+    })]
 end
 
 local function section_controls_for_selected(draw, edited_section, edited_input)
