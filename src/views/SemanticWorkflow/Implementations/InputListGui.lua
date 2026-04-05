@@ -52,7 +52,7 @@ local SCROLLBAR_WIDTH <const> = 0.3
 
 local MAX_DISPLAYED_SECTIONS <const> = 15
 
-local NUM_UIDS_PER_ROW <const> = 4
+local NUM_UIDS_PER_ROW <const> = 20
 local BUTTON_COLORS <const> = {
     { background = '#0000FF64', button = '#0000BEFF' }, -- A
     { background = '#00B11664', button = '#00E62CFF' }, -- B
@@ -292,7 +292,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             local tas_state = input.tas_state
 
             if ugui.button({
-                uid = uid_base + 2,
+                uid = uid_base + 10,
                 rectangle = span(COL_ARRANGEMENT_1, COL_ARRANGEMENT_2),
                 text = '[icon:next_page]',
                 tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_RUN_TO_INPUT_TOOL_TIP'),
@@ -306,7 +306,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 -- mini joysticks and yaw numbers
                 local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_END)
                 ugui.joystick({
-                    uid = uid_base + 3,
+                    uid = uid_base + 11,
                     rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_END, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
