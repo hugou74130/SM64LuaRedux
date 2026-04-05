@@ -59,8 +59,6 @@ local BUTTON_COLORS <const> = {
     { background = '#37373764', button = '#323232FF' }, -- 4 DPad Buttons
 }
 
-local VIEW_MODE_HEADERS <const> = { 'SEMANTIC_WORKFLOW_INPUTLIST_STICK', 'SEMANTIC_WORKFLOW_INPUTLIST_UNTIL' }
-
 --#endregion
 
 --#region logic
@@ -129,9 +127,6 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
     })
     -- Reject invalid file system characters
     sheet.name = sheet.name:gsub("[<>:\"/\\|?*]", "")
-
-    draw:text(grid_rect(COL0, ROW1, COL1 - COL0, 1), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTLIST_SECTION'))
-    draw:text(grid_rect(COL1, ROW1, COL6 - COL1, 1), 'start', Locales.str(VIEW_MODE_HEADERS[view_index]))
 
     if not button_draw_data then return end
 
