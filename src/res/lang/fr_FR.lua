@@ -104,10 +104,9 @@ Cette action est irréversible.
     SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION = 'Développer',
     SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION = 'Réduire',
     SEMANTIC_WORKFLOW_INPUTS_RUN_TO_INPUT_TOOL_TIP = 'S\'arrêter ici',
-    SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION = '+Partie',
-    SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION_TOOL_TIP = 'Insérer une section après la sélection',
-    SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION = '-Partie',
-    SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION_TOOL_TIP = 'Supprimer la section sélectionnée',
+    SEMANTIC_WORKFLOW_INPUTS_PREPEND_SECTION_TOOL_TIP = 'Insert section (before)', -- TODO: translate
+    SEMANTIC_WORKFLOW_INPUTS_APPEND_SECTION_TOOL_TIP = 'Insert section (after)', -- TODO: translate
+    SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION_TOOL_TIP = 'Supprimer la section sélectionnée', -- TODO: translate properly
     SEMANTIC_WORKFLOW_INPUTS_TIMEOUT = 'Délai :',
     SEMANTIC_WORKFLOW_INPUTS_TIMEOUT_TOOL_TIP = 'Terminer la section après N frames maximum',
     SEMANTIC_WORKFLOW_INPUTS_END_ACTION = 'Action de fin :',

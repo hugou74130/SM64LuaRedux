@@ -32,6 +32,17 @@ function WriteAll(file, content)
     return content
 end
 
+function IndexOf(table, element)
+    local index = 1
+    for _, v in pairs(table) do
+        if v == element then
+            return index
+        end
+        index = index + 1
+    end
+    return nil
+end
+
 ---Produces a new name from a base string by appending a number to avoid name collisions (always higher than the highest potential collision).
 ---@param base string The desired name in case of no collision.
 ---@param collision_candidates string[] Names that cannot be used.

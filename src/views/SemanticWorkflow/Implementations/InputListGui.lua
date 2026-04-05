@@ -8,6 +8,9 @@
 ---@diagnostic disable-next-line: assign-type-mismatch
 local __impl = __impl
 
+---@type Section
+local Section = dofile(views_path .. 'SemanticWorkflow/Definitions/Section.lua')
+
 --#region Constants
 
 local MODE_TEXTS <const> = { '-', 'D', 'M', 'Y', 'R', 'A' }
@@ -250,6 +253,20 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         local r = grid_rect(x1, 0, x2 - x1, height, 0)
         return { x = r.x, y = section_rect.y, width = r.width, height = height and r.height or section_rect.height }
     end
+    
+    local deferred_calls = { }
+    local function queue_table_insert(target, reference_item, new_item, offset)
+        deferred_calls[#deferred_calls+1] = function()
+            table.insert(target, IndexOf(target, reference_item) + offset, new_item)
+            -- any_changes = true -- TODO: is this even worth it?
+        end
+    end
+    local function queue_table_remove(target, item)
+        deferred_calls[#deferred_calls+1] = function()
+            table.remove(target, IndexOf(target, item))
+            -- any_changes = true -- TODO: is this even worth it?
+        end
+    end
 
     iterate_input_rows(sheet, function(section, input, section_index, total_inputs, input_sub_index)
         if total_inputs <= scroll_offset then return false end
@@ -280,9 +297,42 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 is_enabled = #section.inputs > 0,
             });
 
-            section.name = ugui.textbox({
+            local function new_section()
+                local base_name = section.name:gsub(' %d+$', '')
+                local new_name = UniqueName(base_name, lualinq.select(sheet.sections, function(x) return x.name end))
+                return Section.new(new_name)
+            end
+
+            if ugui.button({
                 uid = uid_base + 1,
-                rectangle = span(COL_ARRANGEMENT_2, COL_BUTTONS_END),
+                rectangle = span(COL_ARRANGEMENT_2, COL_ARRANGEMENT_3),
+                text = '[icon:arrow_up]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_PREPEND_SECTION_TOOL_TIP"
+            }) then
+                queue_table_insert(sheet.sections, section, new_section(), 0)
+            end
+            
+            if ugui.button({
+                uid = uid_base + 2,
+                rectangle = span(COL_ARRANGEMENT_3, COL_ARRANGEMENT_4),
+                text = '[icon:arrow_down]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_APPEND_SECTION_TOOL_TIP"
+            }) then
+                queue_table_insert(sheet.sections, section, new_section(), 1)
+            end
+
+            if ugui.button({
+                uid = uid_base + 3,
+                rectangle = span(COL_ARRANGEMENT_4, COL_ARRANGEMENT_END),
+                text = '[icon:delete]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_DELETE_SECTION_TOOL_TIP"
+            }) then
+                queue_table_remove(sheet.sections, section)
+            end
+
+            section.name = ugui.textbox({
+                uid = uid_base + 4,
+                rectangle = span(COL_ARRANGEMENT_END, COL_BUTTONS_END),
                 text = section.name or '',
             })
         else
@@ -301,12 +351,40 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 sheet:run_to_preview()
             end
 
+
+            if ugui.button({
+                uid = uid_base + 11,
+                rectangle = span(COL_ARRANGEMENT_2, COL_ARRANGEMENT_3),
+                text = '[icon:arrow_up]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_PREPEND_SECTION_TOOL_TIP"
+            }) then
+                queue_table_insert(section.inputs, input, ugui.internal.deep_clone(input), 0)
+            end
+
+            if ugui.button({
+                uid = uid_base + 12,
+                rectangle = span(COL_ARRANGEMENT_3, COL_ARRANGEMENT_4),
+                text = '[icon:arrow_down]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_APPEND_SECTION_TOOL_TIP"
+            }) then
+                queue_table_insert(section.inputs, input, ugui.internal.deep_clone(input), 1)
+            end
+
+            if ugui.button({
+                uid = uid_base + 13,
+                rectangle = span(COL_ARRANGEMENT_4, COL_ARRANGEMENT_END),
+                text = '[icon:delete]',
+                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_DELETE_SECTION_TOOL_TIP"
+            }) then
+                queue_table_remove(section.inputs, input)
+            end
+
             local active_input_box = span(COL_ARRANGEMENT_END, COL_BUTTONS)
             if view_index == 1 then
                 -- mini joysticks and yaw numbers
                 local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_END)
                 ugui.joystick({
-                    uid = uid_base + 11,
+                    uid = uid_base + 14,
                     rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_END, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
@@ -385,6 +463,10 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
         section_rect.y = section_rect.y + section_rect.height
     end)
+
+    for _, deferred in pairs(deferred_calls) do
+        deferred()
+    end
 end
 
 --#endregion

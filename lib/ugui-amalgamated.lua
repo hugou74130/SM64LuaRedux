@@ -576,7 +576,7 @@ ugui.control = function(control, type)
         if control.uid == uid then
             error(string.format(
                 'Attempted to show a control with uid %d, which is already in use! Note that some controls reserve more than one uid slot after them.',
-                control.uid))
+                control.uid), 3)
         end
     end
 

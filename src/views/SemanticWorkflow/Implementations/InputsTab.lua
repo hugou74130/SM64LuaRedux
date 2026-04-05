@@ -14,9 +14,6 @@ __impl.help_key = 'INPUTS_TAB'
 ---@type InputListGui
 local InputListGui = dofile(views_path .. 'SemanticWorkflow/Definitions/InputListGui.lua')
 
----@type Section
-local Section = dofile(views_path .. 'SemanticWorkflow/Definitions/Section.lua')
-
 ---@type Gui
 local Gui = dofile(views_path .. 'SemanticWorkflow/Definitions/Gui.lua')
 
@@ -38,10 +35,6 @@ local atan_start = 0
 local UID = UIDProvider.allocate_once('InputsTab', function(enum_next)
     return {
         ViewCarrousel = enum_next(),
-        InsertInput = enum_next(),
-        DeleteInput = enum_next(),
-        InsertSection = enum_next(),
-        DeleteSection = enum_next(),
 
         -- Joystick Controls
         Joypad = enum_next(),
@@ -80,78 +73,6 @@ local function any_entries(table)
     for _ in pairs(table) do return true end
     return false
 end
-
---#region Insert and remove
-
-local function controls_for_insert_and_remove()
-    local sheet = SemanticWorkflowProject:asserted_current()
-    local edited_section = sheet.sections[sheet.active_input.section_index]
-    local edited_input = edited_section and edited_section.inputs[sheet.active_input.input_index] or nil
-    local any_changes = false
-
-    local top = TOP
-    if ugui.button({
-            uid = UID.InsertInput,
-            rectangle = grid_rect(0, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_INPUT'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_INPUT_TOOL_TIP'),
-        }) then
-        table.insert(edited_section.inputs, sheet.active_input.input_index, ugui.internal.deep_clone(edited_input))
-        edited_section.collapsed = false
-        any_changes = true
-    end
-
-    if ugui.button({
-            uid = UID.DeleteInput,
-            rectangle = grid_rect(1.5, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_INPUT'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_INPUT_TOOL_TIP'),
-            is_enabled = #edited_section.inputs > 1,
-        }) then
-        table.remove(edited_section.inputs, sheet.active_input.input_index)
-        any_changes = true
-    end
-
-    if ugui.button({
-            uid = UID.InsertSection,
-            rectangle = grid_rect(3, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION_TOOL_TIP'),
-        }) then
-        local base_name = edited_section.name:gsub(' %d+$', '')
-        local new_name = UniqueName(base_name, lualinq.select(sheet.sections, function(x) return x.name end))
-        local new_section = Section.new(new_name)
-        table.insert(sheet.sections, sheet.active_input.section_index + 1, new_section)
-        any_changes = true
-    end
-
-    if ugui.button({
-            uid = UID.DeleteSection,
-            rectangle = grid_rect(4.5, top, 1.5, Gui.MEDIUM_CONTROL_HEIGHT),
-            text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION'),
-            tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION_TOOL_TIP'),
-            is_enabled = #sheet.sections > 1,
-        }) then
-        table.remove(sheet.sections, sheet.active_input.section_index)
-        any_changes = true
-    end
-
-    -- ensure a valid selection in all cases
-    sheet.active_input.section_index = math.min(
-        sheet.active_input.section_index,
-        #sheet.sections
-    )
-    sheet.active_input.input_index = math.min(
-        sheet.active_input.input_index,
-        #sheet.sections[sheet.active_input.section_index].inputs
-    )
-
-    if any_changes then
-        sheet:run_to_preview()
-    end
-end
-
---#endregion
 
 --#region Timeout and end condition controls
 
@@ -519,8 +440,6 @@ end
 
 function __impl.render(draw)
     local sheet = SemanticWorkflowProject:asserted_current()
-    local edited_section = sheet.sections[sheet.active_input.section_index]
-    local edited_input = edited_section and edited_section.inputs[sheet.active_input.input_index] or nil
 
     InputListGui.view_index = selected_view_index
     InputListGui.render(draw)
@@ -534,6 +453,9 @@ function __impl.render(draw)
         selected_index = selected_view_index,
     })
 
-    draw_funcs[selected_view_index](draw, edited_input)
-    controls_for_insert_and_remove()
+    local edited_section = sheet.sections[sheet.active_input.section_index]
+    local edited_input = edited_section and edited_section.inputs[sheet.active_input.input_index] or nil
+    if edited_input then
+        draw_funcs[selected_view_index](draw, edited_input)
+    end
 end
