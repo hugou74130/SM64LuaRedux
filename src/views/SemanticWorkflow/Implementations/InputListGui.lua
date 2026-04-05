@@ -28,15 +28,18 @@ local BUTTONS <const> = {
     { input = 'v',      text = 'v' },
 }
 
-local COL0 <const> = 0.0
-local COL1 <const> = 0.3
-local COL2 <const> = 1.3
-local COL3 <const> = 1.8
+local COL_ARRANGEMENT_1 <const> = 0.0
+local COL_ARRANGEMENT_2 <const> = 0.3
+local COL_ARRANGEMENT_3 <const> = 0.6
+local COL_ARRANGEMENT_4 <const> = 0.9
+local COL_ARRANGEMENT_END <const> = 1.2
+local COL_JOYSTICK_1 <const> = 1.3 -- TODO: move this to the right
+local COL_JOYSTICK_END <const> = 1.8
 local COL4 <const> = 2.1
 local COL5 <const> = 2.3
 local COL6 <const> = 3.1
-local COL7 <const> = 3.3
-local COL_1 <const> = 8.0
+local COL_BUTTONS <const> = 3.3
+local COL_BUTTONS_END <const> = 8.0
 
 local ROW0 <const> = 1.00
 local ROW1 <const> = 1.50
@@ -114,7 +117,7 @@ end
 
 local function draw_headers(sheet, draw, view_index, button_draw_data)
     local background_color = interpolate_vectors_to_int(draw.background_color, { r = 127, g = 127, b = 127 }, 0.25)
-    BreitbandGraphics.fill_rectangle(grid_rect(0, ROW0, COL_1, ROW2 - ROW0, 0), background_color)
+    BreitbandGraphics.fill_rectangle(grid_rect(0, ROW0, COL_BUTTONS_END, ROW2 - ROW0, 0), background_color)
 
     draw:text(grid_rect(3, ROW0, 1, 0.5), 'start', Locales.str('SEMANTIC_WORKFLOW_INPUTLIST_NAME'))
     sheet.name = ugui.textbox({
@@ -139,7 +142,7 @@ local function draw_headers(sheet, draw, view_index, button_draw_data)
 end
 
 local function draw_scrollbar(num_rows)
-    local baseline = grid_rect(COL_1, ROW2, BUTTON_COLUMN_WIDTH, FRAME_COLUMN_HEIGHT, 0)
+    local baseline = grid_rect(COL_BUTTONS_END, ROW2, BUTTON_COLUMN_WIDTH, FRAME_COLUMN_HEIGHT, 0)
     local unit = Settings.grid_size * Drawing.scale
     local num_actually_shown_rows = math.min(MAX_DISPLAYED_SECTIONS, num_rows)
     local scrollbar_rect = {
@@ -170,12 +173,6 @@ local function draw_color_codes(baseline, scrollbar_rect, num_display_sections)
         width = baseline.width,
         height = baseline.height * num_display_sections,
     }
-
-    local f = Settings.grid_size * Drawing.scale
-    BreitbandGraphics.fill_rectangle(
-        { x = COL0 * f + Drawing.initial_size.width, y = rect.y, width = (COL2 - COL0) * f, height = rect.height },
-        '#FF000028'
-    )
 
     local i = 1
     local color_index = 1
@@ -263,19 +260,19 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
         if total_inputs > MAX_DISPLAYED_SECTIONS + scroll_offset then
             local extra_sections = #sheet.sections - section_index
-            BreitbandGraphics.fill_rectangle(span(0, COL_1), '#8A948A42')
-            draw:text(span(COL2, COL_1), 'start', '+ ' .. extra_sections .. ' sections')
+            BreitbandGraphics.fill_rectangle(span(0, COL_BUTTONS_END), '#8A948A42')
+            draw:text(span(COL_ARRANGEMENT_END, COL_BUTTONS_END), 'start', '+ ' .. extra_sections .. ' sections')
             return true
         end
 
         local uid_base = UID.Row(total_inputs - scroll_offset)
         if not input then
             -- section header
-            BreitbandGraphics.fill_rectangle(span(0, COL_1), '#BABABA')
+            BreitbandGraphics.fill_rectangle(span(0, COL_BUTTONS_END), '#BABABA')
 
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
-                rectangle = span(COL0, COL1),
+                rectangle = span(COL_ARRANGEMENT_1, COL_ARRANGEMENT_2),
                 text = section.collapsed and '[icon:arrow_right]' or '[icon:arrow_down]',
                 tooltip = Locales.str(section.collapsed and 'SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION' or
                     'SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION'),
@@ -285,21 +282,18 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
             section.name = ugui.textbox({
                 uid = uid_base + 1,
-                rectangle = span(COL1, COL_1),
+                rectangle = span(COL_ARRANGEMENT_2, COL_BUTTONS_END),
                 text = section.name or '',
             })
         else
             -- input
-            local tas_state = input.tas_state
-            local frame_box = span(COL1, COL2)
-
             BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
-
-            draw:text(frame_box, 'end', section_index .. ':')
+            
+            local tas_state = input.tas_state
 
             if ugui.button({
                 uid = uid_base + 2,
-                rectangle = span(COL0, COL1),
+                rectangle = span(COL_ARRANGEMENT_1, COL_ARRANGEMENT_2),
                 text = '[icon:next_page]',
                 tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_RUN_TO_INPUT_TOOL_TIP'),
             }) then
@@ -307,13 +301,13 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 sheet:run_to_preview()
             end
 
-            local active_input_box = span(COL2, COL7)
+            local active_input_box = span(COL_ARRANGEMENT_END, COL_BUTTONS)
             if view_index == 1 then
                 -- mini joysticks and yaw numbers
-                local joystick_box = span(COL2, COL3)
+                local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_END)
                 ugui.joystick({
                     uid = uid_base + 3,
-                    rectangle = span(COL2, COL3, FRAME_COLUMN_HEIGHT),
+                    rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_END, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
                         joystick = {
@@ -341,11 +335,11 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                     end)
                 end
 
-                draw:text(span(COL3, COL4), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
+                draw:text(span(COL_JOYSTICK_END, COL4), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
 
                 if tas_state.movement_mode == MovementModes.match_angle then
                     draw:text(span(COL5, COL6), 'end', tostring(tas_state.goal_angle))
-                    draw:text(span(COL6, COL7), 'end',
+                    draw:text(span(COL6, COL_BUTTONS), 'end',
                         tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
                 end
             elseif view_index == 2 then
@@ -404,7 +398,7 @@ function __impl.render(draw)
         nil
     draw_headers(current_sheet, draw, __impl.view_index, button_draw_data)
 
-    local section_rect = grid_rect(COL0, ROW2, COL_1 - COL0 - SCROLLBAR_WIDTH, FRAME_COLUMN_HEIGHT, 0)
+    local section_rect = grid_rect(COL_ARRANGEMENT_1, ROW2, COL_BUTTONS_END - COL_ARRANGEMENT_1 - SCROLLBAR_WIDTH, FRAME_COLUMN_HEIGHT, 0)
     if handle_scroll_and_buttons(section_rect, button_draw_data, num_rows) then
         current_sheet:run_to_preview()
     end
