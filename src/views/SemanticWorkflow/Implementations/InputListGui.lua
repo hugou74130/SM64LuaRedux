@@ -31,17 +31,19 @@ local BUTTONS <const> = {
     { input = 'v',      text = 'v' },
 }
 
-local COL_ARRANGEMENT_1 <const> = 0.0
-local COL_ARRANGEMENT_2 <const> = 0.3
-local COL_ARRANGEMENT_3 <const> = 0.6
-local COL_ARRANGEMENT_4 <const> = 0.9
-local COL_ARRANGEMENT_END <const> = 1.2
-local COL_JOYSTICK_1 <const> = 1.3 -- TODO: move this to the right
-local COL_JOYSTICK_END <const> = 1.8
-local COL4 <const> = 2.1
-local COL5 <const> = 2.3
-local COL6 <const> = 3.1
-local COL_BUTTONS <const> = 3.3
+local COL_COLLAPSE_OR_PREVIEW_1 <const> = 0.0
+local COL_COLLAPSE_OR_PREVIEW_END <const> = 0.3
+local COL_ARRANGEMENT_2 <const> = 0.4
+local COL_ARRANGEMENT_3 <const> = 0.7
+local COL_ARRANGEMENT_4 <const> = 1.0
+local COL_ARRANGEMENT_END <const> = 1.3
+local COL_JOYSTICK_1 <const> = 1.8
+local COL_JOYSTICK_2 <const> = 2.3
+local COL_JOYSTICK_3 <const> = 2.5
+local COL_JOYSTICK_4 <const> = 2.6
+local COL_JOYSTICK_5 <const> = 3.35
+local COL_JOYSTICK_END <const> = 3.5
+-- "COL_BUTTONS_START" would be dynamic... shit
 local COL_BUTTONS_END <const> = 8.0
 
 local ROW0 <const> = 1.00
@@ -289,7 +291,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
-                rectangle = span(COL_ARRANGEMENT_1, COL_ARRANGEMENT_2),
+                rectangle = span(COL_COLLAPSE_OR_PREVIEW_1, COL_COLLAPSE_OR_PREVIEW_END),
                 text = section.collapsed and '[icon:arrow_right]' or '[icon:arrow_down]',
                 tooltip = Locales.str(section.collapsed and 'SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION' or
                     'SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION'),
@@ -343,7 +345,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
             if ugui.button({
                 uid = uid_base + 10,
-                rectangle = span(COL_ARRANGEMENT_1, COL_ARRANGEMENT_2),
+                rectangle = span(COL_COLLAPSE_OR_PREVIEW_1, COL_COLLAPSE_OR_PREVIEW_END),
                 text = '[icon:next_page]',
                 tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_RUN_TO_INPUT_TOOL_TIP'),
             }) then
@@ -379,13 +381,13 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 queue_table_remove(section.inputs, input)
             end
 
-            local active_input_box = span(COL_ARRANGEMENT_END, COL_BUTTONS)
+            local active_input_box = span(COL_ARRANGEMENT_END, COL_JOYSTICK_END)
             if view_index == 1 then
                 -- mini joysticks and yaw numbers
-                local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_END)
+                local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_2)
                 ugui.joystick({
                     uid = uid_base + 14,
-                    rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_END, FRAME_COLUMN_HEIGHT),
+                    rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_2, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
                         joystick = {
@@ -413,11 +415,11 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                     end)
                 end
 
-                draw:text(span(COL_JOYSTICK_END, COL4), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
+                draw:text(span(COL_JOYSTICK_2, COL_JOYSTICK_3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
 
                 if tas_state.movement_mode == MovementModes.match_angle then
-                    draw:text(span(COL5, COL6), 'end', tostring(tas_state.goal_angle))
-                    draw:text(span(COL6, COL_BUTTONS), 'end',
+                    draw:text(span(COL_JOYSTICK_4, COL_JOYSTICK_5), 'end', tostring(tas_state.goal_angle))
+                    draw:text(span(COL_JOYSTICK_5, COL_JOYSTICK_END), 'end',
                         tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
                 end
             elseif view_index == 2 then
@@ -480,7 +482,7 @@ function __impl.render(draw)
         nil
     draw_headers(current_sheet, draw, __impl.view_index, button_draw_data)
 
-    local section_rect = grid_rect(COL_ARRANGEMENT_1, ROW2, COL_BUTTONS_END - COL_ARRANGEMENT_1 - SCROLLBAR_WIDTH, FRAME_COLUMN_HEIGHT, 0)
+    local section_rect = grid_rect(COL_COLLAPSE_OR_PREVIEW_1, ROW2, COL_BUTTONS_END - COL_COLLAPSE_OR_PREVIEW_1 - SCROLLBAR_WIDTH, FRAME_COLUMN_HEIGHT, 0)
     if handle_scroll_and_buttons(section_rect, button_draw_data, num_rows) then
         current_sheet:run_to_preview()
     end
