@@ -49,7 +49,7 @@ local SCROLLBAR_WIDTH <const> = 0.3
 
 local MAX_DISPLAYED_SECTIONS <const> = 15
 
-local NUM_UIDS_PER_ROW <const> = 3
+local NUM_UIDS_PER_ROW <const> = 4
 local BUTTON_COLORS <const> = {
     { background = '#0000FF64', button = '#0000BEFF' }, -- A
     { background = '#00B11664', button = '#00E62CFF' }, -- B
@@ -272,7 +272,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         if not input then
             -- section header
             BreitbandGraphics.fill_rectangle(span(0, COL_1), '#BABABA')
-    
+
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
                 rectangle = span(COL0, COL1),
@@ -297,7 +297,12 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
             draw:text(frame_box, 'end', section_index .. ':')
 
-            if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
+            if ugui.button({
+                uid = uid_base + 2,
+                rectangle = span(COL0, COL1),
+                text = '[icon:next_page]',
+                tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_RUN_TO_INPUT_TOOL_TIP'),
+            }) then
                 sheet.preview_input = { section_index = section_index, input_index = input_sub_index }
                 sheet:run_to_preview()
             end
@@ -307,7 +312,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 -- mini joysticks and yaw numbers
                 local joystick_box = span(COL2, COL3)
                 ugui.joystick({
-                    uid = uid_base + 2,
+                    uid = uid_base + 3,
                     rectangle = span(COL2, COL3, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
