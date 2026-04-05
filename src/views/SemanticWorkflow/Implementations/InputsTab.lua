@@ -118,7 +118,9 @@ local function controls_for_insert_and_remove()
             text = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION'),
             tooltip = Locales.str('SEMANTIC_WORKFLOW_INPUTS_INSERT_SECTION_TOOL_TIP'),
         }) then
-        local new_section = Section.new()
+        local base_name = edited_section.name:gsub(' %d+$', '')
+        local new_name = UniqueName(base_name, lualinq.select(sheet.sections, function(x) return x.name end))
+        local new_section = Section.new(new_name)
         table.insert(sheet.sections, sheet.active_input.section_index + 1, new_section)
         any_changes = true
     end

@@ -48,7 +48,7 @@ local SCROLLBAR_WIDTH <const> = 0.3
 
 local MAX_DISPLAYED_SECTIONS <const> = 15
 
-local NUM_UIDS_PER_ROW <const> = 2
+local NUM_UIDS_PER_ROW <const> = 3
 local BUTTON_COLORS <const> = {
     { background = '#0000FF64', button = '#0000BEFF' }, -- A
     { background = '#00B11664', button = '#00E62CFF' }, -- B
@@ -78,27 +78,27 @@ local UID = UIDProvider.allocate_once('InputListGui', function(enum_next)
     }
 end)
 
----@alias IterateInputsCallback fun(section: Section, input: SectionInputs, section_index: integer, total_inputs_counted: integer, input_index: integer): boolean?
+---@alias IterateInputsCallback fun(section: Section, input: SectionInputs|nil, section_index: integer, total_inputs_counted: integer, input_index: integer): boolean?
 
 ---@function Iterates all sections as an input row, including their follow-up inputs for non-collapsed sections.
 ---@param sheet Sheet The sheet over whose sections to iterate.
 ---@param callback IterateInputsCallback? an optional function that, when it returns true, terminates the enumeration.
 local function iterate_input_rows(sheet, callback)
-    local total_inputs_counted = 1
+    local total_rows_counted = 1
     local total_sections_counted = 1
     for section_index = 1, #sheet.sections, 1 do
         local section = sheet.sections[section_index]
-        for input_index = 1, #section.inputs, 1 do
-            if callback and callback(section, section.inputs[input_index], total_sections_counted, total_inputs_counted, input_index) then
-                return total_inputs_counted
+        for input_index = 0, #section.inputs, 1 do
+            if callback and callback(section, input_index > 0 and section.inputs[input_index] or nil, total_sections_counted, total_rows_counted, input_index) then
+                return total_rows_counted
             end
 
-            total_inputs_counted = total_inputs_counted + 1
+            total_rows_counted = total_rows_counted + 1
             if section.collapsed then break end
         end
         total_sections_counted = total_sections_counted + 1
     end
-    return total_inputs_counted - 1
+    return total_rows_counted - 1
 end
 
 local function update_scroll(wheel, num_rows)
@@ -229,7 +229,7 @@ local function handle_scroll_and_buttons(section_rect, button_draw_data, num_row
     if not button_draw_data then return end
 
     iterate_input_rows(SemanticWorkflowProject:asserted_current(), function(section, input, section_index, input_index)
-        if input_index == hovering_index and in_range and section ~= nil then
+        if input and input_index == hovering_index and in_range and section ~= nil then
             for button_index, v in ipairs(BUTTONS) do
                 local in_range_x = mouse_x >= button_draw_data[button_index].x and
                     mouse_x < button_draw_data[button_index + 1].x
@@ -272,14 +272,11 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             return true
         end
 
-        local tas_state = input.tas_state
-        local frame_box = span(COL0 + 0.3, COL1)
-
         local uid_base = UID.Row(total_inputs - scroll_offset)
-
-        BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
-
-        if input_sub_index == 1 then
+        if not input then
+            -- section header
+            BreitbandGraphics.fill_rectangle(span(0, COL_1), '#BABABA')
+    
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
                 rectangle = span(COL0, COL0 + 0.3),
@@ -287,96 +284,108 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 tooltip = Locales.str(section.collapsed and 'SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION' or
                     'SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION'),
                 is_checked = not section.collapsed,
-                is_enabled = #section.inputs > 1,
-            }) or #section.inputs == 1;
-        end
+                is_enabled = #section.inputs > 0,
+            });
 
-        draw:text(frame_box, 'end', section_index .. ':')
-
-        if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
-            sheet.preview_input = { section_index = section_index, input_index = input_sub_index }
-            sheet:run_to_preview()
-        end
-
-        local active_input_box = span(COL1, COL6)
-        if view_index == 1 then
-            -- mini joysticks and yaw numbers
-            local joystick_box = span(COL1, COL2)
-            ugui.joystick({
+            section.name = ugui.textbox({
                 uid = uid_base + 1,
-                rectangle = span(COL1, COL2, FRAME_COLUMN_HEIGHT),
-                position = { x = input.joy.X, y = -input.joy.Y },
-                styler_mixin = {
-                    joystick = {
-                        tip_size = 4 * Drawing.scale,
-                    },
-                },
+                rectangle = span(COL0 + 0.3, COL_1),
+                text = section.name or '',
             })
+        else
+            -- input
+            local tas_state = input.tas_state
+            local frame_box = span(COL0 + 0.3, COL1)
 
-            if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
-                if ugui.internal.is_mouse_just_down() and not G_KEYS['control'] then
-                    for _, section in pairs(sheet.sections) do
-                        for _, input in pairs(section.inputs) do
-                            input.editing = false
+            BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
+
+            draw:text(frame_box, 'end', section_index .. ':')
+
+            if ugui.internal.is_mouse_just_down() and BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, frame_box) then
+                sheet.preview_input = { section_index = section_index, input_index = input_sub_index }
+                sheet:run_to_preview()
+            end
+
+            local active_input_box = span(COL1, COL6)
+            if view_index == 1 then
+                -- mini joysticks and yaw numbers
+                local joystick_box = span(COL1, COL2)
+                ugui.joystick({
+                    uid = uid_base + 2,
+                    rectangle = span(COL1, COL2, FRAME_COLUMN_HEIGHT),
+                    position = { x = input.joy.X, y = -input.joy.Y },
+                    styler_mixin = {
+                        joystick = {
+                            tip_size = 4 * Drawing.scale,
+                        },
+                    },
+                })
+
+                if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
+                    if ugui.internal.is_mouse_just_down() and not G_KEYS['control'] then
+                        for _, section in pairs(sheet.sections) do
+                            for _, input in pairs(section.inputs) do
+                                input.editing = false
+                            end
                         end
+                        input.editing = true
+                    elseif ugui.internal.environment.is_primary_down then
+                        input.editing = true
                     end
-                    input.editing = true
-                elseif ugui.internal.environment.is_primary_down then
-                    input.editing = true
+                end
+
+                if input.editing then
+                    defer(function()
+                        BreitbandGraphics.fill_rectangle(joystick_box, '#00C80064')
+                    end)
+                end
+
+                draw:text(span(COL2, COL3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
+
+                if tas_state.movement_mode == MovementModes.match_angle then
+                    draw:text(span(COL4, COL5), 'end', tostring(tas_state.goal_angle))
+                    draw:text(span(COL5, COL6), 'end',
+                        tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
+                end
+            elseif view_index == 2 then
+                -- end action
+                draw:text(active_input_box, 'start', Locales.action(input.end_action))
+            end
+
+            if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_input_box) then
+                if ugui.internal.is_mouse_just_down() then
+                    if __impl.special_select_handler then
+                        __impl.special_select_handler({ section_index = section_index, input_index = input_sub_index })
+                    else
+                        sheet.active_input = { section_index = section_index, input_index = input_sub_index }
+                    end
                 end
             end
 
-            if input.editing then
-                defer(function()
-                    BreitbandGraphics.fill_rectangle(joystick_box, '#00C80064')
-                end)
-            end
-
-            draw:text(span(COL2, COL3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
-
-            if tas_state.movement_mode == MovementModes.match_angle then
-                draw:text(span(COL4, COL5), 'end', tostring(tas_state.goal_angle))
-                draw:text(span(COL5, COL6), 'end',
-                    tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
-            end
-        elseif view_index == 2 then
-            -- end action
-            draw:text(active_input_box, 'start', Locales.action(input.end_action))
-        end
-
-        if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_input_box) then
-            if ugui.internal.is_mouse_just_down() then
-                if __impl.special_select_handler then
-                    __impl.special_select_handler({ section_index = section_index, input_index = input_sub_index })
-                else
-                    sheet.active_input = { section_index = section_index, input_index = input_sub_index }
+            -- draw buttons
+            local unit = Settings.grid_size * Drawing.scale
+            local sz = BUTTON_SIZE * unit
+            local rect = {
+                x = 0,
+                y = section_rect.y + (FRAME_COLUMN_HEIGHT - BUTTON_SIZE) * 0.5 * unit,
+                width = sz,
+                height = sz,
+            }
+            for button_index, v in ipairs(BUTTONS) do
+                rect.x = button_draw_data[button_index].x + unit * (BUTTON_COLUMN_WIDTH - BUTTON_SIZE) * 0.5
+                if input.joy[v.input] then
+                    BreitbandGraphics.fill_ellipse(rect, BUTTON_COLORS[button_draw_data[button_index].color_index].button)
                 end
+                BreitbandGraphics.draw_ellipse(rect, input.joy[v.input] and '#000000FF' or '#00000050', 1)
             end
-        end
 
-        -- draw buttons
-        local unit = Settings.grid_size * Drawing.scale
-        local sz = BUTTON_SIZE * unit
-        local rect = {
-            x = 0,
-            y = section_rect.y + (FRAME_COLUMN_HEIGHT - BUTTON_SIZE) * 0.5 * unit,
-            width = sz,
-            height = sz,
-        }
-        for button_index, v in ipairs(BUTTONS) do
-            rect.x = button_draw_data[button_index].x + unit * (BUTTON_COLUMN_WIDTH - BUTTON_SIZE) * 0.5
-            if input.joy[v.input] then
-                BreitbandGraphics.fill_ellipse(rect, BUTTON_COLORS[button_draw_data[button_index].color_index].button)
+            if section_index == sheet.preview_input.section_index and sheet.preview_input.input_index == input_sub_index then
+                BreitbandGraphics.draw_rectangle(section_rect, '#FF0000FF', 1)
             end
-            BreitbandGraphics.draw_ellipse(rect, input.joy[v.input] and '#000000FF' or '#00000050', 1)
-        end
 
-        if section_index == sheet.preview_input.section_index and sheet.preview_input.input_index == input_sub_index then
-            BreitbandGraphics.draw_rectangle(section_rect, '#FF0000FF', 1)
-        end
-
-        if section_index == sheet.active_input.section_index and sheet.active_input.input_index == input_sub_index then
-            BreitbandGraphics.draw_rectangle(section_rect, '#64FF64FF', 1)
+            if section_index == sheet.active_input.section_index and sheet.active_input.input_index == input_sub_index then
+                BreitbandGraphics.draw_rectangle(section_rect, '#64FF64FF', 1)
+            end
         end
 
         section_rect.y = section_rect.y + section_rect.height
