@@ -385,15 +385,15 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
 
             -- mini joysticks and yaw numbers
             local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_2)
+            local mixin = { joystick = { tip_size = 4 * Drawing.scale } }
+            if input.editing then
+                mixin.joystick.back = { [1] = '#00C80064' }
+            end
             ugui.joystick({
                 uid = uid_base + 14,
                 rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_2, FRAME_COLUMN_HEIGHT),
                 position = { x = input.joy.X, y = -input.joy.Y },
-                styler_mixin = {
-                    joystick = {
-                        tip_size = 4 * Drawing.scale,
-                    },
-                },
+                styler_mixin = mixin,
             })
 
             if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
@@ -407,12 +407,6 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 elseif ugui.internal.environment.is_primary_down then
                     input.editing = true
                 end
-            end
-
-            if input.editing then
-                defer(function()
-                    BreitbandGraphics.fill_rectangle(joystick_box, '#00C80064')
-                end)
             end
 
             draw:text(span(COL_JOYSTICK_2, COL_JOYSTICK_3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
