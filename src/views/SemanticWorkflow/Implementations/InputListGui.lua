@@ -120,7 +120,7 @@ local function interpolate_vectors_to_int(a, b, f)
     return result
 end
 
-local function draw_headers(sheet, draw, view_index, button_draw_data)
+local function draw_headers(sheet, draw, button_draw_data)
     local background_color = interpolate_vectors_to_int(draw.background_color, { r = 127, g = 127, b = 127 }, 0.25)
     BreitbandGraphics.fill_rectangle(grid_rect(0, ROW0, COL_BUTTONS_END, ROW2 - ROW0, 0), background_color)
 
@@ -250,7 +250,7 @@ local function handle_scroll_and_buttons(section_rect, button_draw_data, num_row
 end
 
 ---@param sheet Sheet
-local function draw_sections_gui(sheet, draw, view_index, section_rect, button_draw_data)
+local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
     local function span(x1, x2, height)
         local r = grid_rect(x1, 0, x2 - x1, height, 0)
         return { x = r.x, y = section_rect.y, width = r.width, height = height and r.height or section_rect.height }
@@ -382,49 +382,45 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
             end
 
             local active_input_box = span(COL_ARRANGEMENT_END, COL_JOYSTICK_END)
-            if view_index == 1 then
-                -- mini joysticks and yaw numbers
-                local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_2)
-                ugui.joystick({
-                    uid = uid_base + 14,
-                    rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_2, FRAME_COLUMN_HEIGHT),
-                    position = { x = input.joy.X, y = -input.joy.Y },
-                    styler_mixin = {
-                        joystick = {
-                            tip_size = 4 * Drawing.scale,
-                        },
+
+            -- mini joysticks and yaw numbers
+            local joystick_box = span(COL_JOYSTICK_1, COL_JOYSTICK_2)
+            ugui.joystick({
+                uid = uid_base + 14,
+                rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_2, FRAME_COLUMN_HEIGHT),
+                position = { x = input.joy.X, y = -input.joy.Y },
+                styler_mixin = {
+                    joystick = {
+                        tip_size = 4 * Drawing.scale,
                     },
-                })
+                },
+            })
 
-                if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
-                    if ugui.internal.is_mouse_just_down() and not G_KEYS['control'] then
-                        for _, section in pairs(sheet.sections) do
-                            for _, input in pairs(section.inputs) do
-                                input.editing = false
-                            end
+            if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, joystick_box) then
+                if ugui.internal.is_mouse_just_down() and not G_KEYS['control'] then
+                    for _, section in pairs(sheet.sections) do
+                        for _, input in pairs(section.inputs) do
+                            input.editing = false
                         end
-                        input.editing = true
-                    elseif ugui.internal.environment.is_primary_down then
-                        input.editing = true
                     end
+                    input.editing = true
+                elseif ugui.internal.environment.is_primary_down then
+                    input.editing = true
                 end
+            end
 
-                if input.editing then
-                    defer(function()
-                        BreitbandGraphics.fill_rectangle(joystick_box, '#00C80064')
-                    end)
-                end
+            if input.editing then
+                defer(function()
+                    BreitbandGraphics.fill_rectangle(joystick_box, '#00C80064')
+                end)
+            end
 
-                draw:text(span(COL_JOYSTICK_2, COL_JOYSTICK_3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
+            draw:text(span(COL_JOYSTICK_2, COL_JOYSTICK_3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
 
-                if tas_state.movement_mode == MovementModes.match_angle then
-                    draw:text(span(COL_JOYSTICK_4, COL_JOYSTICK_5), 'end', tostring(tas_state.goal_angle))
-                    draw:text(span(COL_JOYSTICK_5, COL_JOYSTICK_END), 'end',
-                        tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
-                end
-            elseif view_index == 2 then
-                -- end action
-                draw:text(active_input_box, 'start', Locales.action(input.end_action))
+            if tas_state.movement_mode == MovementModes.match_angle then
+                draw:text(span(COL_JOYSTICK_4, COL_JOYSTICK_5), 'end', tostring(tas_state.goal_angle))
+                draw:text(span(COL_JOYSTICK_5, COL_JOYSTICK_END), 'end',
+                    tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
             end
 
             if BreitbandGraphics.is_point_inside_rectangle(ugui_environment.mouse_position, active_input_box) then
@@ -480,12 +476,12 @@ function __impl.render(draw)
     local baseline, scrollbar_rect = draw_scrollbar(num_rows)
     local button_draw_data = draw_color_codes(baseline, scrollbar_rect, math.min(num_rows, MAX_DISPLAYED_SECTIONS)) or
         nil
-    draw_headers(current_sheet, draw, __impl.view_index, button_draw_data)
+    draw_headers(current_sheet, draw, button_draw_data)
 
     local section_rect = grid_rect(COL_COLLAPSE_OR_PREVIEW_1, ROW2, COL_BUTTONS_END - COL_COLLAPSE_OR_PREVIEW_1 - SCROLLBAR_WIDTH, FRAME_COLUMN_HEIGHT, 0)
     if handle_scroll_and_buttons(section_rect, button_draw_data, num_rows) then
         current_sheet:run_to_preview()
     end
 
-    draw_sections_gui(current_sheet, draw, __impl.view_index, section_rect, button_draw_data)
+    draw_sections_gui(current_sheet, draw, section_rect, button_draw_data)
 end

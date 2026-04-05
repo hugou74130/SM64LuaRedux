@@ -4,14 +4,9 @@
 -- SPDX-License-Identifier: GPL-2.0-or-later
 --
 
----@alias InputListViewIndex integer Determines which kind of detail to show in the InputListGui.
----Angle and control sticks; 1: Section end action
-
 ---@class InputListGui : Gui The control that displays and selects the selected sheet's sections.
----@field view_index InputListViewIndex The index of the information kind to show.
 ---@field special_select_handler fun(selection_input) | nil A callback that overrides the behavior when an input row would normally be selected.
 local cls_input_list_gui = {
-    view_index = 0,
     special_select_handler = nil,
 }
 

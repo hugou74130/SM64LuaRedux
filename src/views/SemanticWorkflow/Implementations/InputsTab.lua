@@ -441,7 +441,6 @@ end
 function __impl.render(draw)
     local sheet = SemanticWorkflowProject:asserted_current()
 
-    InputListGui.view_index = selected_view_index
     InputListGui.render(draw)
 
     local draw_funcs = { joystick_controls_for_selected, section_controls_for_selected }
