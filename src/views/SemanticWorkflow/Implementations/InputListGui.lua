@@ -29,12 +29,13 @@ local BUTTONS <const> = {
 }
 
 local COL0 <const> = 0.0
-local COL1 <const> = 1.3
-local COL2 <const> = 1.8
-local COL3 <const> = 2.1
-local COL4 <const> = 2.3
-local COL5 <const> = 3.1
-local COL6 <const> = 3.3
+local COL1 <const> = 0.3
+local COL2 <const> = 1.3
+local COL3 <const> = 1.8
+local COL4 <const> = 2.1
+local COL5 <const> = 2.3
+local COL6 <const> = 3.1
+local COL7 <const> = 3.3
 local COL_1 <const> = 8.0
 
 local ROW0 <const> = 1.00
@@ -172,7 +173,7 @@ local function draw_color_codes(baseline, scrollbar_rect, num_display_sections)
 
     local f = Settings.grid_size * Drawing.scale
     BreitbandGraphics.fill_rectangle(
-        { x = COL0 * f + Drawing.initial_size.width, y = rect.y, width = (COL1 - COL0) * f, height = rect.height },
+        { x = COL0 * f + Drawing.initial_size.width, y = rect.y, width = (COL2 - COL0) * f, height = rect.height },
         '#FF000028'
     )
 
@@ -263,7 +264,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
         if total_inputs > MAX_DISPLAYED_SECTIONS + scroll_offset then
             local extra_sections = #sheet.sections - section_index
             BreitbandGraphics.fill_rectangle(span(0, COL_1), '#8A948A42')
-            draw:text(span(COL1, COL_1), 'start', '+ ' .. extra_sections .. ' sections')
+            draw:text(span(COL2, COL_1), 'start', '+ ' .. extra_sections .. ' sections')
             return true
         end
 
@@ -274,7 +275,7 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
     
             section.collapsed = not ugui.toggle_button({
                 uid = uid_base + 0,
-                rectangle = span(COL0, COL0 + 0.3),
+                rectangle = span(COL0, COL1),
                 text = section.collapsed and '[icon:arrow_right]' or '[icon:arrow_down]',
                 tooltip = Locales.str(section.collapsed and 'SEMANTIC_WORKFLOW_INPUTS_EXPAND_SECTION' or
                     'SEMANTIC_WORKFLOW_INPUTS_COLLAPSE_SECTION'),
@@ -284,13 +285,13 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
 
             section.name = ugui.textbox({
                 uid = uid_base + 1,
-                rectangle = span(COL0 + 0.3, COL_1),
+                rectangle = span(COL1, COL_1),
                 text = section.name or '',
             })
         else
             -- input
             local tas_state = input.tas_state
-            local frame_box = span(COL0 + 0.3, COL1)
+            local frame_box = span(COL1, COL2)
 
             BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
 
@@ -301,13 +302,13 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                 sheet:run_to_preview()
             end
 
-            local active_input_box = span(COL1, COL6)
+            local active_input_box = span(COL2, COL7)
             if view_index == 1 then
                 -- mini joysticks and yaw numbers
-                local joystick_box = span(COL1, COL2)
+                local joystick_box = span(COL2, COL3)
                 ugui.joystick({
                     uid = uid_base + 2,
-                    rectangle = span(COL1, COL2, FRAME_COLUMN_HEIGHT),
+                    rectangle = span(COL2, COL3, FRAME_COLUMN_HEIGHT),
                     position = { x = input.joy.X, y = -input.joy.Y },
                     styler_mixin = {
                         joystick = {
@@ -335,11 +336,11 @@ local function draw_sections_gui(sheet, draw, view_index, section_rect, button_d
                     end)
                 end
 
-                draw:text(span(COL2, COL3), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
+                draw:text(span(COL3, COL4), 'center', MODE_TEXTS[tas_state.movement_mode + 1])
 
                 if tas_state.movement_mode == MovementModes.match_angle then
-                    draw:text(span(COL4, COL5), 'end', tostring(tas_state.goal_angle))
-                    draw:text(span(COL5, COL6), 'end',
+                    draw:text(span(COL5, COL6), 'end', tostring(tas_state.goal_angle))
+                    draw:text(span(COL6, COL7), 'end',
                         tas_state.strain_left and '<' or (tas_state.strain_right and '>' or '-'))
                 end
             elseif view_index == 2 then
