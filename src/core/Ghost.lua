@@ -443,6 +443,25 @@ function Ghost.get_frame_info()
     return lo, #replay_frames
 end
 
+---Returns the position delta between Mario and the ghost for the current frame, or nil if not replaying.
+---@return {x: number, y: number, z: number}?
+function Ghost.get_position_delta()
+    if not is_replaying then
+        return nil
+    end
+    local address_source = Addresses[Settings.address_source_index]
+    local global_timer = memory.readdword(address_source.global_timer)
+    local ghost_pos = Ghost.get_replay_position(global_timer)
+    if not ghost_pos then
+        return nil
+    end
+    return {
+        x = Memory.current.mario_x - ghost_pos.x,
+        y = Memory.current.mario_y - ghost_pos.y,
+        z = Memory.current.mario_z - ghost_pos.z,
+    }
+end
+
 ---Re-applies RAM hacks after a savestate load, if hack replay is active.
 function Ghost.on_loadstate()
     if is_hack_replaying then

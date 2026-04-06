@@ -317,21 +317,38 @@ local function atdrawd2d()
     MiniVisualizer.draw()
     Notifications.draw()
 
-    -- Ghost frame counter overlay
+    -- Ghost overlay
     if Ghost.replaying() then
+        local theme = Styles.theme()
+        local color = { r = 255, g = 255, b = 0, a = 255 }
+        local font_size = theme.font_size * Drawing.scale * 1.25
+        local x, y = 5, 5
+
         local current_frame, total_frames = Ghost.get_frame_info()
         if current_frame and total_frames then
-            local text = 'Ghost: ' .. current_frame .. ' / ' .. total_frames
-            local theme = Styles.theme()
-            local color = { r = 255, g = 255, b = 0, a = 255 }
             BreitbandGraphics.draw_text(
-                { x = 5, y = 5, width = 200, height = 20 },
-                'start', 'start',
-                { aliased = true },
-                color,
-                theme.font_size * Drawing.scale * 1.25,
-                'Consolas',
-                text)
+                { x = x, y = y, width = 200, height = 20 },
+                'start', 'start', { aliased = true }, color, font_size, 'Consolas',
+                'Ghost: ' .. current_frame .. ' / ' .. total_frames)
+            y = y + 18
+        end
+
+        local delta = Ghost.get_position_delta()
+        if delta then
+            BreitbandGraphics.draw_text(
+                { x = x, y = y, width = 200, height = 20 },
+                'start', 'start', { aliased = true }, color, font_size, 'Consolas',
+                'dX: ' .. Formatter.u(delta.x, 2))
+            y = y + 18
+            BreitbandGraphics.draw_text(
+                { x = x, y = y, width = 200, height = 20 },
+                'start', 'start', { aliased = true }, color, font_size, 'Consolas',
+                'dY: ' .. Formatter.u(delta.y, 2))
+            y = y + 18
+            BreitbandGraphics.draw_text(
+                { x = x, y = y, width = 200, height = 20 },
+                'start', 'start', { aliased = true }, color, font_size, 'Consolas',
+                'dZ: ' .. Formatter.u(delta.z, 2))
         end
     end
 
