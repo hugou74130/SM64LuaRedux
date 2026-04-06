@@ -37,7 +37,7 @@ local COL_ARRANGEMENT_2 <const> = 0.4
 local COL_ARRANGEMENT_3 <const> = 0.7
 local COL_ARRANGEMENT_4 <const> = 1.0
 local COL_ARRANGEMENT_END <const> = 1.3
-local COL_TERMINATION_1 <const> = 1.3 -- TODO: implementation
+local COL_TERMINATION_1 <const> = 1.3
 local COL_TERMINATION_END <const> = 1.8
 local COL_JOYSTICK_1 <const> = 1.8
 local COL_JOYSTICK_2 <const> = 2.3
@@ -257,7 +257,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
         local r = grid_rect(x1, 0, x2 - x1, height, 0)
         return { x = r.x, y = section_rect.y, width = r.width, height = height and r.height or section_rect.height }
     end
-    
+
     local deferred_calls = { }
     local function queue_table_insert(target, reference_item, new_item, offset)
         deferred_calls[#deferred_calls+1] = function()
@@ -311,16 +311,16 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 uid = uid_base + 1,
                 rectangle = span(COL_ARRANGEMENT_2, COL_ARRANGEMENT_3),
                 text = '[icon:arrow_up]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_PREPEND_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_PREPEND_SECTION_TOOL_TIP"
             }) then
                 queue_table_insert(sheet.sections, section, new_section(), 0)
             end
-            
+
             if ugui.button({
                 uid = uid_base + 2,
                 rectangle = span(COL_ARRANGEMENT_3, COL_ARRANGEMENT_4),
                 text = '[icon:arrow_down]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_APPEND_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_APPEND_SECTION_TOOL_TIP"
             }) then
                 queue_table_insert(sheet.sections, section, new_section(), 1)
             end
@@ -329,7 +329,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 uid = uid_base + 3,
                 rectangle = span(COL_ARRANGEMENT_4, COL_ARRANGEMENT_END),
                 text = '[icon:delete]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_DELETE_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_DELETE_SECTION_TOOL_TIP"
             }) then
                 queue_table_remove(sheet.sections, section)
             end
@@ -342,7 +342,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
         else
             -- input
             BreitbandGraphics.fill_rectangle(section_rect, { r = shade, g = shade, b = shade * blue_multiplier, a = 66 })
-            
+
             local tas_state = input.tas_state
 
             if ugui.button({
@@ -360,7 +360,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 uid = uid_base + 11,
                 rectangle = span(COL_ARRANGEMENT_2, COL_ARRANGEMENT_3),
                 text = '[icon:arrow_up]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_PREPEND_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_PREPEND_INPUT_TOOL_TIP"
             }) then
                 queue_table_insert(section.inputs, input, ugui.internal.deep_clone(input), 0)
             end
@@ -369,7 +369,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 uid = uid_base + 12,
                 rectangle = span(COL_ARRANGEMENT_3, COL_ARRANGEMENT_4),
                 text = '[icon:arrow_down]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_APPEND_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_APPEND_INPUT_TOOL_TIP"
             }) then
                 queue_table_insert(section.inputs, input, ugui.internal.deep_clone(input), 1)
             end
@@ -378,9 +378,24 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 uid = uid_base + 13,
                 rectangle = span(COL_ARRANGEMENT_4, COL_ARRANGEMENT_END),
                 text = '[icon:delete]',
-                tooltip = "SEMANTIC_WORKFLOW_INPUTLIST_DELETE_SECTION_TOOL_TIP"
+                tooltip = "SEMANTIC_WORKFLOW_INPUTS_DELETE_INPUT_TOOL_TIP"
             }) then
                 queue_table_remove(section.inputs, input)
+            end
+
+            local termination_tool_tip =
+                (input.end_action ~= 0
+                    and Locales.str('SEMANTIC_WORKFLOW_INPUTS_TERMINATION_TOOL_TIP_1')
+                        .. Locales.action(input.end_action) .. '\n'
+                    or ''
+                ) .. Locales.str('SEMANTIC_WORKFLOW_INPUTS_TERMINATION_TOOL_TIP_2') .. input.timeout
+            if ugui.button({
+                uid = uid_base + 14,
+                rectangle = span(COL_TERMINATION_1, COL_TERMINATION_END),
+                text = input.end_action ~= 0 and '[icon:action]' or input.timeout < 100 and '' .. input.timeout or '99+',
+                tooltip = termination_tool_tip,
+            }) then
+                __impl.selected_view_index = 2
             end
 
             local active_input_box = span(COL_ARRANGEMENT_END, COL_JOYSTICK_END)
@@ -392,7 +407,7 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                 mixin.joystick.back = { [1] = '#00C80064' }
             end
             ugui.joystick({
-                uid = uid_base + 14,
+                uid = uid_base + 15,
                 rectangle = span(COL_JOYSTICK_1, COL_JOYSTICK_2, FRAME_COLUMN_HEIGHT),
                 position = { x = input.joy.X, y = -input.joy.Y },
                 styler_mixin = mixin,
@@ -406,8 +421,10 @@ local function draw_sections_gui(sheet, draw, section_rect, button_draw_data)
                         end
                     end
                     input.editing = true
+                    __impl.selected_view_index = 1
                 elseif ugui.internal.environment.is_primary_down then
                     input.editing = true
+                    __impl.selected_view_index = 1
                 end
             end
 

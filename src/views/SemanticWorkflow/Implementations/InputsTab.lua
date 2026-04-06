@@ -27,8 +27,6 @@ local TOP <const> = 10.25
 
 --#region Logic
 
-local selected_view_index = 1
-
 local previous_preview_input
 local atan_start = 0
 
@@ -61,11 +59,9 @@ local UID = UIDProvider.allocate_once('InputsTab', function(enum_next)
         Swim = enum_next(),
 
         -- Section Controls
-        Kind = enum_next(),
         Timeout = enum_next(2),
         EndAction = enum_next(),
         EndActionTextbox = enum_next(),
-        AvailableActions = enum_next(MAX_ACTION_GUESSES),
     }
 end)
 
@@ -231,6 +227,8 @@ local function select_atan_start(selection_input)
 end
 
 local function atan_controls(draw, sheet, new_values, top)
+    local any_changes = false
+
     if not sheet.busy then
         if InputListGui.special_select_handler == select_atan_end then
             atan_start = Memory.current.mario_global_timer - 1
@@ -444,17 +442,10 @@ function __impl.render(draw)
     InputListGui.render(draw)
 
     local draw_funcs = { joystick_controls_for_selected, section_controls_for_selected }
-    selected_view_index = ugui.carrousel_button({
-        uid = UID.ViewCarrousel,
-        rectangle = grid_rect(6, TOP, 2, Gui.MEDIUM_CONTROL_HEIGHT),
-        value = selected_view_index,
-        items = { 'Joystick', 'Section' },
-        selected_index = selected_view_index,
-    })
 
     local edited_section = sheet.sections[sheet.active_input.section_index]
     local edited_input = edited_section and edited_section.inputs[sheet.active_input.input_index] or nil
     if edited_input then
-        draw_funcs[selected_view_index](draw, edited_input)
+        draw_funcs[InputListGui.selected_view_index](draw, edited_input)
     end
 end
