@@ -61,7 +61,6 @@ function __impl:evaluate_frame()
     if (input.timeout and self._frame_counter >= input.timeout)
         or current_action == input.end_action
     then
-        print("switching after: " .. self._section_index .. ", " .. self._input_index .. ", " .. self._frame_counter)
         self._input_index = self._input_index + 1
         self._frame_counter = 0
         if #section.inputs < self._input_index then
