@@ -29,7 +29,7 @@ function __impl.new(name, create_savestate)
         _invalidated = true,
         _rebasing = false,
         _section_index = 1,
-        _input_counter = 0,
+        _input_index = 1,
         _frame_counter = 0,
         _section_frame_counter = 0,
         evaluate_frame = __impl.evaluate_frame,
@@ -102,6 +102,11 @@ end
 local function run_to_preview_internal(sheet, from_base)
     sheet.busy = true
 
+    sheet._section_index = 1
+    sheet._input_index = 1
+    sheet._frame_counter = 0
+    sheet._section_frame_counter = 0
+
     if from_base == nil or from_base then
         if sheet._base_sheet ~= nil then
             if sheet._savestate == nil or sheet._base_sheet:invalidated() then
@@ -127,11 +132,6 @@ local function run_to_preview_internal(sheet, from_base)
         emu.pause(true)
         emu.set_ff(Settings.semantic_workflow.fast_foward)
     end
-
-    sheet._section_index = 1
-    sheet._input_index = 1
-    sheet._frame_counter = 0
-    sheet._section_frame_counter = 0
 end
 
 function __impl:invalidated()
