@@ -317,6 +317,24 @@ local function atdrawd2d()
     MiniVisualizer.draw()
     Notifications.draw()
 
+    -- Ghost frame counter overlay
+    if Ghost.replaying() then
+        local current_frame, total_frames = Ghost.get_frame_info()
+        if current_frame and total_frames then
+            local text = 'Ghost: ' .. current_frame .. ' / ' .. total_frames
+            local theme = Styles.theme()
+            local color = { r = 255, g = 255, b = 0, a = 255 }
+            BreitbandGraphics.draw_text(
+                { x = 5, y = 5, width = 200, height = 20 },
+                'start', 'start',
+                { aliased = true },
+                color,
+                theme.font_size * Drawing.scale * 1.25,
+                'Consolas',
+                text)
+        end
+    end
+
     BreitbandGraphics.fill_rectangle({
         x = Drawing.initial_size.width,
         y = 0,

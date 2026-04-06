@@ -423,6 +423,26 @@ function Ghost.get_replay_position(global_timer)
     return { x = f.x, y = f.y, z = f.z }
 end
 
+---Returns the current frame index in the replay and the total frame count, or nil if not replaying.
+---@return integer?, integer?
+function Ghost.get_frame_info()
+    if not is_replaying then
+        return nil, nil
+    end
+    local address_source = Addresses[Settings.address_source_index]
+    local global_timer = memory.readdword(address_source.global_timer)
+    local lo, hi = 1, #replay_frames
+    while lo < hi do
+        local mid = (lo + hi) >> 1
+        if replay_frames[mid].global_timer < global_timer then
+            lo = mid + 1
+        else
+            hi = mid
+        end
+    end
+    return lo, #replay_frames
+end
+
 ---Re-applies RAM hacks after a savestate load, if hack replay is active.
 function Ghost.on_loadstate()
     if is_hack_replaying then
