@@ -8,9 +8,9 @@ local RNG_ROW = 1
 local DUMPING_ROW = 3
 local GHOST_ROW = 5
 local GHOST_COLOR_ROW = 6
-local TRACKERS_ROW = 8
-local OVERLAYS_ROW = 10
-local AUTOMATION_ROW = 12
+local TRACKERS_ROW = 9
+local OVERLAYS_ROW = 11
+local AUTOMATION_ROW = 13
 
 local UID = UIDProvider.allocate_once('Tools', function(enum_next)
     return {
@@ -21,6 +21,7 @@ local UID = UIDProvider.allocate_once('Tools', function(enum_next)
         RecordGhost = enum_next(),
         PlayGhost = enum_next(),
         GhostColorR = enum_next(3),
+        GhostTransparent = enum_next(),
         WorldVisualizer = enum_next(),
         AutoFirsties = enum_next(),
         MiniVisualizer = enum_next(),
@@ -179,6 +180,13 @@ return {
             places = 3,
             value = Settings.ghost_color[3],
         }))))
+
+        Settings.ghost_transparent = ugui.toggle_button({
+            uid = UID.GhostTransparent,
+            rectangle = grid_rect(0, GHOST_COLOR_ROW + 1, 4, 1),
+            text = Locales.str('TOOLS_GHOST_TRANSPARENT'),
+            is_checked = Settings.ghost_transparent,
+        })
 
         BreitbandGraphics.draw_text(
             grid_rect(0, TRACKERS_ROW - 1, 8, 1),

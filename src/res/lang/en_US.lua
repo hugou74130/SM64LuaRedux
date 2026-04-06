@@ -179,6 +179,7 @@ This action cannot be undone.
     TOOLS_GHOST_START_REPLAY = 'Play Ghost',
     TOOLS_GHOST_STOP_REPLAY = 'Stop Ghost',
     TOOLS_GHOST_LOAD_REPLAY_FAILED = 'Failed to load ghost file.',
+    TOOLS_GHOST_TRANSPARENT = 'Transparent',
     TOOLS_TRACKERS = 'Trackers',
     TOOLS_OVERLAYS = 'Overlays',
     TOOLS_AUTOMATION = 'Automation',

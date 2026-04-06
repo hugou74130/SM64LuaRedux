@@ -181,6 +181,7 @@ Cette action est irréversible.
     TOOLS_GHOST_START_REPLAY = 'Lire le fantôme',
     TOOLS_GHOST_STOP_REPLAY = 'Arrêter le fantôme',
     TOOLS_GHOST_LOAD_REPLAY_FAILED = 'Échec du chargement du fichier fantôme.',
+    TOOLS_GHOST_TRANSPARENT = 'Transparent',
     TOOLS_TRACKERS = 'Trackers',
     TOOLS_OVERLAYS = 'Superpositions',
     TOOLS_AUTOMATION = 'Automatisation',

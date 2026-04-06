@@ -188,7 +188,7 @@ local function update_hack_replay()
     write_ghost_color_to_stream(1, Settings.ghost_color)
     -- Set transparency
     local ptr = memory.readdword(0x80407FF8) + 0x61
-    memory.writebyte(ptr, hack_transparent and 1 or 0)
+    memory.writebyte(ptr, Settings.ghost_transparent and 1 or 0)
 end
 
 local function writebytes32(f, x)
