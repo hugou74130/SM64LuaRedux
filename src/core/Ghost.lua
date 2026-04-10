@@ -156,7 +156,7 @@ local function write_hack_ghost_frame(slot, f)
     memory.writefloat(addr + 0x00, f.x)
     memory.writefloat(addr + 0x04, f.y)
     memory.writefloat(addr + 0x08, f.z)
-    memory.writeword(addr + 0x0E, f.animation_index)
+    memory.writedword(addr + 0x0C, f.animation_index)
     memory.writedword(addr + 0x10, f.pitch)
     memory.writedword(addr + 0x14, f.yaw)
     memory.writedword(addr + 0x18, f.roll)
@@ -263,7 +263,7 @@ function Ghost.update()
 	end
 
 	local address_source = Addresses[Settings.address_source_index]
-	local mario_obj = memory.readdword(address_source.mario_object_pointer)
+	local mario_obj = memory.readdword(address_source.mario_object_effective)
 	local global_timer = memory.readdword(address_source.global_timer)
 
 	if recording_base_frame == nil then
