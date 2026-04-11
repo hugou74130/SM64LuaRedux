@@ -60,12 +60,11 @@ end
 Timer.update = function()
     curVI = emu.framecount()
     if (State == 1) then
-        if (curVI <= StartVI) then
+        if (curVI < StartVI) then
             VIs = 0
             frames = 0
         else
-            PredictedVIs = curVI + 2 -- assume it will increment by 2, fix it on the next frame if there's lag
-            VIs = PredictedVIs - StartVI
+            VIs = VIs + 1
             frames = frames + 1
         end
     end
@@ -80,7 +79,7 @@ Timer.reset = function()
 end
 Timer.start = function()
     State = 1
-    VIs = 2
+    VIs = 0
     StartVI = curVI
 end
 Timer.stop = function()
