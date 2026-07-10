@@ -36,6 +36,10 @@ function NewTASState()
         target_z = 0,
         target_invert = false,
         target_stop_dist = 0,
+        -- Auto-Route path mode
+        waypoints = {},
+        waypoint_index = 1,
+        waypoint_loop = false,
     }
 end
 
@@ -162,6 +166,14 @@ Settings = {
         {
             identifier = 'atan_start_frame',
             visible = true,
+        },
+        {
+            identifier = 'dist_to_target',
+            visible = false,
+        },
+        {
+            identifier = 'angle_to_target',
+            visible = false,
         },
     },
     address_source_index = 1,

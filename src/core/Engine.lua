@@ -96,12 +96,62 @@ function Engine.distance_to_point(mx, mz, tx, tz)
 	return math.sqrt((tx - mx) ^ 2 + (tz - mz) ^ 2)
 end
 
----Distance in game units from Mario to the currently configured Auto-Route target.
+Engine.WAYPOINT_DEFAULT_REACH = 25
+
+---Returns the currently active Auto-Route target coordinate.
+---When a waypoint path is defined, this is the current waypoint; otherwise it is
+---the single target point. Falls back to (0, 0) for presets predating the feature.
+---@return number, number # target X, target Z
+function Engine.active_target()
+	local wp = Settings.tas.waypoints
+	if wp and #wp > 0 then
+		local i = Settings.tas.waypoint_index or 1
+		i = math.max(1, math.min(i, #wp))
+		return wp[i].x, wp[i].z
+	end
+	return Settings.tas.target_x or 0, Settings.tas.target_z or 0
+end
+
+---Pure waypoint-advance rule. Given the current 1-based index, the number of
+---waypoints and whether the path loops, returns the next index and whether the
+---route is now complete (reached the final waypoint of a non-looping path).
+---@param index integer
+---@param count integer
+---@param loop boolean
+---@return integer next_index
+---@return boolean complete
+function Engine.advance_waypoint(index, count, loop)
+	if count <= 0 then
+		return 1, true
+	end
+	if index < count then
+		return index + 1, false
+	end
+	if loop then
+		return 1, false
+	end
+	return count, true
+end
+
+---Distance in game units from Mario to the active Auto-Route target.
 ---@return number
 function Engine.distance_to_target()
-	return Engine.distance_to_point(
-		Memory.current.mario_x, Memory.current.mario_z,
-		Settings.tas.target_x, Settings.tas.target_z)
+	local tx, tz = Engine.active_target()
+	return Engine.distance_to_point(Memory.current.mario_x, Memory.current.mario_z, tx, tz)
+end
+
+---Estimates how many frames it will take to cover `distance` game units at the
+---given horizontal speed (units/frame). Returns math.huge when speed is
+---negligible so callers can render it as "unreachable".
+---@param distance number
+---@param h_speed number
+---@return number
+function Engine.eta_frames(distance, h_speed)
+	local s = math.abs(h_speed)
+	if s < 1e-3 then
+		return math.huge
+	end
+	return distance / s
 end
 
 function Engine.stick_for_input_x(state)
@@ -211,9 +261,9 @@ Engine.inputsForAngle = function(goal, curr_input)
 		corrected_facing_yaw = Memory.current.mario_gfx_angle
 	end
 	if (Settings.tas.movement_mode == MovementModes.target_point) then
-		-- Auto-Route: steer straight towards the configured world coordinate.
-		goal = Engine.angle_to_point(Memory.current.mario_x, Memory.current.mario_z,
-			Settings.tas.target_x, Settings.tas.target_z)
+		-- Auto-Route: steer straight towards the active target (waypoint or point).
+		local tx, tz = Engine.active_target()
+		goal = Engine.angle_to_point(Memory.current.mario_x, Memory.current.mario_z, tx, tz)
 		if (Settings.tas.target_invert) then
 			goal = (goal + 32768) % 65536
 		end

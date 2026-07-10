@@ -36,6 +36,30 @@ just supplies a live goal angle instead of a static one.
 Hotkey: `Ctrl+5` toggles the Target Point mode (matching `Ctrl+1..4` for the
 other movement modes).
 
+## Waypoint paths
+
+Instead of a single point, you can chain a route:
+
+1. Walk Mario to each spot in order and press **Add Waypoint** at each one.
+2. Enable **Route To Target**. Mario heads to waypoint 1, and once he is within
+   the reach radius he automatically advances to waypoint 2, then 3, and so on.
+3. **Loop path** wraps back to waypoint 1 after the last one (useful for grinding
+   a circuit); with it off, Mario stops (stick released) at the final waypoint.
+4. **Clear** empties the path and returns to single-point mode.
+
+The reach radius for advancing between waypoints is the **Stop dist** value, or a
+small default (25 units) when Stop dist is 0. The `Waypoint i/N` readout shows
+progress. When any waypoints exist they take priority over the single X/Z point.
+
+## Extras
+
+- **ETA** — the readout estimates how many frames Mario needs to reach the active
+  target at his current horizontal speed (`distance / h_speed`), or
+  `unreachable` when he is stopped.
+- **VarWatch variables** — `dist_to_target` and `angle_to_target` are available in
+  the VarWatch settings (hidden by default); enable them to show target distance
+  and heading in the main variable list and overlay.
+
 ### Invert 180°
 
 `atan2s` follows the game's own angle convention, so steering should be correct

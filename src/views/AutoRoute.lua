@@ -8,16 +8,16 @@
 --
 -- Exposes the `target_point` movement mode: instead of holding a fixed angle,
 -- the engine recomputes, every frame, the world yaw pointing from Mario towards
--- a stored (X, Z) coordinate and feeds it into the existing angle optimizer.
--- This turns SM64 Lua Redux into an auto-steering assistant: pick a spot, and
--- Mario walks straight to it at optimal magnitude.
+-- the active target and feeds it into the existing angle optimizer. The target
+-- is either a single (X, Z) point or the current waypoint of a path.
 
 local HEADER_ROW = 0
 local MODE_ROW = 1
 local CAPTURE_ROW = 2
 local COORD_ROW = 3
 local STOP_ROW = 4
-local READOUT_ROW = 6
+local WAYPOINT_ROW = 5
+local READOUT_ROW = 8
 
 local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
     return {
@@ -31,26 +31,18 @@ local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
         TargetZ = enum_next(4),
         StopLabel = enum_next(),
         StopDist = enum_next(4),
+        Loop = enum_next(),
+        AddWaypoint = enum_next(),
+        ClearWaypoints = enum_next(),
+        WaypointInfo = enum_next(),
         ReadoutLabel = enum_next(),
         Distance = enum_next(),
         Angle = enum_next(),
+        Eta = enum_next(),
         Position = enum_next(),
         Status = enum_next(),
     }
 end)
-
-local function header_label(uid, row, text, theme, foreground_color)
-    ugui.label({
-        uid = uid,
-        rectangle = grid_rect(0, row, 8, 1),
-        text = text,
-        color = foreground_color,
-        font_size = theme.font_size * Drawing.scale * 1.25,
-        font_name = theme.font_name,
-        align_x = BreitbandGraphics.alignment['start'],
-        align_y = BreitbandGraphics.alignment.center,
-    })
-end
 
 return {
     name = function() return Locales.str('AUTOROUTE_TAB_NAME') end,
@@ -63,8 +55,23 @@ return {
         Settings.tas.target_x = Settings.tas.target_x or 0
         Settings.tas.target_z = Settings.tas.target_z or 0
         Settings.tas.target_stop_dist = Settings.tas.target_stop_dist or 0
+        Settings.tas.waypoints = Settings.tas.waypoints or {}
+        Settings.tas.waypoint_index = Settings.tas.waypoint_index or 1
 
-        local mono = function(uid, rect, text)
+        local function header(uid, row, text)
+            ugui.label({
+                uid = uid,
+                rectangle = grid_rect(0, row, 8, 1),
+                text = text,
+                color = foreground_color,
+                font_size = theme.font_size * Drawing.scale * 1.25,
+                font_name = theme.font_name,
+                align_x = BreitbandGraphics.alignment['start'],
+                align_y = BreitbandGraphics.alignment.center,
+            })
+        end
+
+        local function mono(uid, rect, text)
             ugui.label({
                 uid = uid,
                 rectangle = rect,
@@ -77,7 +84,7 @@ return {
             })
         end
 
-        header_label(UID.Header, HEADER_ROW, Locales.str('AUTOROUTE_HEADER'), theme, foreground_color)
+        header(UID.Header, HEADER_ROW, Locales.str('AUTOROUTE_HEADER'))
 
         -- Movement mode toggle: target_point <-> disabled.
         local _, meta = ugui.toggle_button({
@@ -102,7 +109,7 @@ return {
             action.invoke(ACTION_TOGGLE_TARGET_INVERT)
         end
 
-        -- Capture current position as the target.
+        -- Capture current position as the single-point target.
         if ugui.button({
                 uid = UID.Capture,
                 rectangle = grid_rect(0, CAPTURE_ROW, 8, 1),
@@ -111,8 +118,8 @@ return {
             action.invoke(ACTION_SET_TARGET_TO_CURRENT_POS)
         end
 
-        -- Target coordinate spinners. Untouched values keep their float precision;
-        -- interacting nudges by whole units, which is plenty for routing.
+        -- Single-point target coordinate spinners. Untouched values keep their
+        -- float precision; interacting nudges by whole units.
         mono(UID.TargetXLabel, grid_rect(0, COORD_ROW, 1, 1), 'X')
         Settings.tas.target_x = ugui.spinner({
             uid = UID.TargetX,
@@ -133,7 +140,7 @@ return {
             maximum_value = 32768,
         })
 
-        -- Stop radius: release the stick once Mario is this close (0 disables).
+        -- Stop radius (0 disables) and path looping.
         mono(UID.StopLabel, grid_rect(0, STOP_ROW, 2, 1), Locales.str('AUTOROUTE_STOP_DIST'))
         Settings.tas.target_stop_dist = math.max(0, ugui.spinner({
             uid = UID.StopDist,
@@ -144,22 +151,55 @@ return {
             maximum_value = 32768,
         }))
 
-        -- Live readouts.
-        header_label(UID.ReadoutLabel, READOUT_ROW - 1, Locales.str('AUTOROUTE_READOUT'), theme, foreground_color)
+        Settings.tas.waypoint_loop = ugui.toggle_button({
+            uid = UID.Loop,
+            rectangle = grid_rect(5, STOP_ROW, 3, 1),
+            text = Locales.str('AUTOROUTE_LOOP'),
+            is_checked = Settings.tas.waypoint_loop or false,
+        })
 
+        -- Waypoint path controls.
+        if ugui.button({
+                uid = UID.AddWaypoint,
+                rectangle = grid_rect(0, WAYPOINT_ROW, 3, 1),
+                text = Locales.str('AUTOROUTE_ADD_WAYPOINT'),
+            }) then
+            action.invoke(ACTION_ADD_WAYPOINT)
+        end
+
+        if ugui.button({
+                uid = UID.ClearWaypoints,
+                rectangle = grid_rect(3, WAYPOINT_ROW, 2, 1),
+                text = Locales.str('AUTOROUTE_CLEAR_WAYPOINTS'),
+            }) then
+            action.invoke(ACTION_CLEAR_WAYPOINTS)
+        end
+
+        local waypoint_count = #Settings.tas.waypoints
+        local waypoint_index = waypoint_count > 0 and math.min(Settings.tas.waypoint_index, waypoint_count) or 0
+        mono(UID.WaypointInfo, grid_rect(5, WAYPOINT_ROW, 3, 1),
+            string.format(Locales.str('AUTOROUTE_WAYPOINTS'), waypoint_index, waypoint_count))
+
+        -- Live readouts.
+        header(UID.ReadoutLabel, READOUT_ROW - 1, Locales.str('AUTOROUTE_READOUT'))
+
+        local tx, tz = Engine.active_target()
         local distance = Engine.distance_to_target()
         local angle = Engine.angle_to_point(
-            Memory.current.mario_x or 0, Memory.current.mario_z or 0,
-            Settings.tas.target_x, Settings.tas.target_z)
+            Memory.current.mario_x or 0, Memory.current.mario_z or 0, tx, tz)
         if Settings.tas.target_invert then
             angle = (angle + 32768) % 65536
         end
+        local eta = Engine.eta_frames(distance, Memory.current.mario_h_speed or 0)
 
         mono(UID.Distance, grid_rect(0, READOUT_ROW, 8, 1),
             Locales.str('AUTOROUTE_DISTANCE') .. ': ' .. Formatter.u(distance, 3))
         mono(UID.Angle, grid_rect(0, READOUT_ROW + 1, 8, 1),
             Locales.str('AUTOROUTE_ANGLE') .. ': ' .. Formatter.angle(angle))
-        mono(UID.Position, grid_rect(0, READOUT_ROW + 2, 8, 1),
+        mono(UID.Eta, grid_rect(0, READOUT_ROW + 2, 8, 1),
+            Locales.str('AUTOROUTE_ETA') .. ': '
+            .. (eta == math.huge and Locales.str('AUTOROUTE_ETA_NA') or (MoreMaths.round(eta, 0) .. 'f')))
+        mono(UID.Position, grid_rect(0, READOUT_ROW + 3, 8, 1),
             'X ' .. Formatter.u(Memory.current.mario_x or 0, 1)
             .. '   Z ' .. Formatter.u(Memory.current.mario_z or 0, 1))
 
@@ -171,6 +211,6 @@ return {
         else
             status = Locales.str('AUTOROUTE_STATUS_ROUTING')
         end
-        mono(UID.Status, grid_rect(0, READOUT_ROW + 3, 8, 1), status)
+        mono(UID.Status, grid_rect(0, READOUT_ROW + 4, 8, 1), status)
     end,
 }

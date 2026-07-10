@@ -16,6 +16,8 @@ ACTION_SET_MOVEMENT_MODE_MATCH_ANGLE = ACTION_MOVEMENT_MODE .. ' > Match Angle'
 ACTION_SET_MOVEMENT_MODE_TARGET_POINT = ACTION_MOVEMENT_MODE .. ' > Target Point'
 ACTION_SET_TARGET_TO_CURRENT_POS = ROOT .. 'Auto-Route > Set Target to Current Position'
 ACTION_TOGGLE_TARGET_INVERT = ROOT .. 'Auto-Route > Invert Target Angle'
+ACTION_ADD_WAYPOINT = ROOT .. 'Auto-Route > Add Waypoint at Current Position'
+ACTION_CLEAR_WAYPOINTS = ROOT .. 'Auto-Route > Clear Waypoints'
 ACTION_SET_GOAL_ANGLE_TO_FACING_YAW = ROOT .. 'Set Angle to Facing Yaw'
 ACTION_SET_GOAL_ANGLE_TO_INTENDED_YAW = ROOT .. 'Set Angle to Intended Yaw'
 ACTION_DECREMENT_ANGLE = ROOT .. 'Angle -1'
@@ -147,6 +149,26 @@ actions[#actions + 1] = wrap_params({
     end,
     get_active = function()
         return Settings.tas.target_invert
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_ADD_WAYPOINT,
+    on_press = function()
+        Memory.update()
+        Settings.tas.waypoints = Settings.tas.waypoints or {}
+        Settings.tas.waypoints[#Settings.tas.waypoints + 1] = {
+            x = Memory.current.mario_x,
+            z = Memory.current.mario_z,
+        }
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_CLEAR_WAYPOINTS,
+    on_press = function()
+        Settings.tas.waypoints = {}
+        Settings.tas.waypoint_index = 1
     end,
 })
 

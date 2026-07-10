@@ -15,14 +15,30 @@ return {
         end
         Memory.update()
 
-        -- Auto-Route: once within the stop radius of the target, release the stick so
-        -- Mario coasts/decelerates instead of overshooting the coordinate.
-        if Settings.tas.movement_mode == MovementModes.target_point
-            and Settings.tas.target_stop_dist > 0
-            and Engine.distance_to_target() <= Settings.tas.target_stop_dist then
-            input.X = 0
-            input.Y = 0
-            return input
+        -- Auto-Route arrival handling.
+        if Settings.tas.movement_mode == MovementModes.target_point then
+            local waypoints = Settings.tas.waypoints
+            local stop_dist = Settings.tas.target_stop_dist or 0
+            if waypoints and #waypoints > 0 then
+                -- Path mode: advance to the next waypoint when close enough.
+                local reach = stop_dist > 0 and stop_dist or Engine.WAYPOINT_DEFAULT_REACH
+                if Engine.distance_to_target() <= reach then
+                    local next_index, complete = Engine.advance_waypoint(
+                        Settings.tas.waypoint_index or 1, #waypoints, Settings.tas.waypoint_loop)
+                    Settings.tas.waypoint_index = next_index
+                    if complete then
+                        input.X = 0
+                        input.Y = 0
+                        return input
+                    end
+                end
+            elseif stop_dist > 0 and Engine.distance_to_target() <= stop_dist then
+                -- Single-point mode: release the stick within the stop radius so
+                -- Mario coasts instead of overshooting.
+                input.X = 0
+                input.Y = 0
+                return input
+            end
         end
 
         local result = Engine.inputsForAngle(Settings.tas.goal_angle, input)

@@ -94,6 +94,38 @@ Settings.tas.target_x = 13
 Settings.tas.target_z = 14
 check_num('distance_to_target', Engine.distance_to_target(), 5)
 
+-- active_target: single point when no waypoints.
+Settings.tas.waypoints = {}
+local ax, az = Engine.active_target()
+check_num('active_target x (point)', ax, 13)
+check_num('active_target z (point)', az, 14)
+
+-- active_target: current waypoint when a path exists.
+Settings.tas.waypoints = { { x = 100, z = 200 }, { x = -5, z = -5 } }
+Settings.tas.waypoint_index = 2
+ax, az = Engine.active_target()
+check_num('active_target x (waypoint)', ax, -5)
+check_num('active_target z (waypoint)', az, -5)
+
+-- advance_waypoint: mid-path advances, no completion.
+local ni, complete = Engine.advance_waypoint(1, 3, false)
+check_num('advance 1/3 -> 2', ni, 2)
+check_num('advance 1/3 not complete', complete and 1 or 0, 0)
+
+-- advance_waypoint: last waypoint, no loop -> stay + complete.
+ni, complete = Engine.advance_waypoint(3, 3, false)
+check_num('advance 3/3 -> 3', ni, 3)
+check_num('advance 3/3 complete', complete and 1 or 0, 1)
+
+-- advance_waypoint: last waypoint, loop -> wrap to 1, not complete.
+ni, complete = Engine.advance_waypoint(3, 3, true)
+check_num('advance 3/3 loop -> 1', ni, 1)
+check_num('advance 3/3 loop not complete', complete and 1 or 0, 0)
+
+-- eta_frames: distance / speed, huge when stopped.
+check_num('eta 100u @ 25u/f = 4f', Engine.eta_frames(100, 25), 4)
+check_num('eta stopped is huge', Engine.eta_frames(100, 0) == math.huge and 1 or 0, 1)
+
 -- ---------------------------------------------------------------------------
 print(string.format('\n%d checks, %d failure(s)', checks, failures))
 if failures > 0 then

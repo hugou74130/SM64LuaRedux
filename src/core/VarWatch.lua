@@ -81,6 +81,18 @@ local var_funcs = {
     ['atan_start_frame'] = function()
         return 'S: ' .. math.floor(Settings.tas.atan_start + 1)
     end,
+    ['dist_to_target'] = function()
+        return string.format(Locales.str('VARWATCH_DIST_TO_TARGET'),
+            Formatter.u(Engine.distance_to_target()))
+    end,
+    ['angle_to_target'] = function()
+        local tx, tz = Engine.active_target()
+        local angle = Engine.angle_to_point(Memory.current.mario_x, Memory.current.mario_z, tx, tz)
+        if Settings.tas.target_invert then
+            angle = (angle + 32768) % 65536
+        end
+        return string.format(Locales.str('VARWATCH_ANGLE_TO_TARGET'), Formatter.angle(angle))
+    end,
 }
 VarWatch = {
     processed_values = {},
