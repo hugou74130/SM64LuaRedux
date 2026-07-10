@@ -67,6 +67,7 @@ Settings = {
     format_decimal_points = 4,
     format_angles_degrees = false,
     worldviz_enabled = false,
+    autoroute_overlay = true,
     truncate_effective_angle = false,
     active_style_index = 2,
     locale_index = 1,

@@ -112,6 +112,67 @@ local function draw_moved_dist()
     end
 end
 
+-- Auto-Route overlay: draw the target point / waypoint path in the game world.
+local function draw_route()
+    if Settings.autoroute_overlay == false then
+        return
+    end
+    local waypoints = Settings.tas.waypoints
+    local has_path = waypoints and #waypoints > 0
+    if not (Settings.tas.movement_mode == MovementModes.target_point or has_path) then
+        return
+    end
+
+    local y = Memory.current.mario_y
+
+    -- Build the ordered list of route points (waypoints, or the single point).
+    local points = {}
+    if has_path then
+        for i = 1, #waypoints do
+            points[i] = { x = waypoints[i].x, y = y, z = waypoints[i].z }
+        end
+    else
+        points[1] = { x = Settings.tas.target_x or 0, y = y, z = Settings.tas.target_z or 0 }
+    end
+
+    -- Segments between consecutive waypoints.
+    local yellow = { r = 255, g = 210, b = 0, a = 200 }
+    local green = { r = 0, g = 220, b = 90, a = 220 }
+    for i = 2, #points do
+        local a = project(points[i - 1])
+        local b = project(points[i])
+        if is_inside_frustum(a) and is_inside_frustum(b) then
+            BreitbandGraphics.draw_line(a, b, yellow, 2)
+        end
+    end
+
+    -- Line from Mario to the active target.
+    local tx, tz = Engine.active_target()
+    local mario_p = project({ x = Memory.current.mario_x, y = y, z = Memory.current.mario_z })
+    local target_p = project({ x = tx, y = y, z = tz })
+    if is_inside_frustum(mario_p) and is_inside_frustum(target_p) then
+        BreitbandGraphics.draw_line(mario_p, target_p, green, 3)
+    end
+
+    -- Markers at each route point; highlight the active waypoint.
+    local active_index = has_path
+        and math.max(1, math.min(Settings.tas.waypoint_index or 1, #points)) or 1
+    for i = 1, #points do
+        local p = project(points[i])
+        if is_inside_frustum(p) then
+            local size = 24000 / p.z
+            local rect = {
+                x = math.floor(p.x - size / 2),
+                y = math.floor(p.y - size / 2),
+                width = math.floor(size),
+                height = math.floor(size),
+            }
+            local color = (i == active_index) and green or yellow
+            BreitbandGraphics.fill_ellipse(rect, color)
+        end
+    end
+end
+
 WorldVisualizer.draw = function()
     if not Settings.worldviz_enabled then
         return
@@ -145,4 +206,5 @@ WorldVisualizer.draw = function()
     end
 
     draw_moved_dist()
+    draw_route()
 end

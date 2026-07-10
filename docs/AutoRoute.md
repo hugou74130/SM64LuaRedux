@@ -62,6 +62,33 @@ progress. When any waypoints exist they take priority over the single X/Z point.
 - The **Path** readout shows remaining length (Mario → current waypoint → end)
   over the total path length.
 
+## Editing a path
+
+The **Edit Waypoints** section selects a waypoint with the spinner and shows its
+coordinates. From there:
+
+- the up/down arrows reorder the selected waypoint,
+- **Del** removes it,
+- **Insert** inserts Mario's current position right after the selection,
+- **Set Active** makes the selected waypoint the one Mario is currently routing to.
+
+## Importing coordinates
+
+**Import from Clipboard** parses coordinates copied from another tool (for
+example STROOP's position readout) into a waypoint path. Each line is scanned for
+numbers: a line with three or more becomes `X, Y, Z` (Y ignored), a line with two
+becomes `X, Z`, and anything else is skipped. Separators (spaces, commas,
+semicolons, tabs, parentheses) are all tolerated, so pasting a block of positions
+generally just works.
+
+## Overlay
+
+With the **World Visualizer** enabled (Tools tab) and **Overlay** ticked on the
+Auto-Route tab, the route is drawn in the game world: yellow segments connect the
+waypoints, a green line runs from Mario to the active target, and each waypoint is
+marked (the active one in green). The overlay uses the World Visualizer's camera
+projection, so it only shows while that overlay is on.
+
 ## Extras
 
 - **ETA** — the readout estimates how many frames Mario needs to reach the active

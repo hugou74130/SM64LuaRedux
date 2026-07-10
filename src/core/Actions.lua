@@ -22,6 +22,7 @@ ACTION_REMOVE_LAST_WAYPOINT = ROOT .. 'Auto-Route > Remove Last Waypoint'
 ACTION_JUMP_NEAREST_WAYPOINT = ROOT .. 'Auto-Route > Jump to Nearest Waypoint'
 ACTION_SAVE_ROUTE = ROOT .. 'Auto-Route > Save Route'
 ACTION_LOAD_ROUTE = ROOT .. 'Auto-Route > Load Route'
+ACTION_IMPORT_CLIPBOARD = ROOT .. 'Auto-Route > Import Waypoints from Clipboard'
 ROUTE_PATH = 'route.json'
 ACTION_SET_GOAL_ANGLE_TO_FACING_YAW = ROOT .. 'Set Angle to Facing Yaw'
 ACTION_SET_GOAL_ANGLE_TO_INTENDED_YAW = ROOT .. 'Set Angle to Intended Yaw'
@@ -232,6 +233,31 @@ actions[#actions + 1] = wrap_params({
         Settings.tas.waypoints = Engine.sanitize_waypoints(decoded)
         Settings.tas.waypoint_index = 1
         print('Auto-Route: loaded ' .. #Settings.tas.waypoints .. ' waypoint(s) from ' .. ROUTE_PATH)
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_IMPORT_CLIPBOARD,
+    on_press = function()
+        local text = nil
+        if clipboard and clipboard.get then
+            local ok, value = pcall(clipboard.get, 'text')
+            if ok then
+                text = value
+            end
+        end
+        if not text then
+            print('Auto-Route: clipboard is empty or unavailable.')
+            return
+        end
+        local parsed = Engine.parse_coordinate_text(text)
+        if #parsed == 0 then
+            print('Auto-Route: no coordinates found in clipboard.')
+            return
+        end
+        Settings.tas.waypoints = parsed
+        Settings.tas.waypoint_index = 1
+        print('Auto-Route: imported ' .. #parsed .. ' waypoint(s) from clipboard.')
     end,
 })
 

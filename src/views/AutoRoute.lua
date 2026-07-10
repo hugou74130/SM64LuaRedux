@@ -9,7 +9,8 @@
 -- Exposes the `target_point` movement mode: instead of holding a fixed angle,
 -- the engine recomputes, every frame, the world yaw pointing from Mario towards
 -- the active target and feeds it into the existing angle optimizer. The target
--- is either a single (X, Z) point or the current waypoint of a path.
+-- is either a single (X, Z) point or the current waypoint of a path, which can
+-- be built, edited, saved, loaded, imported and visualized.
 
 local HEADER_ROW = 0
 local MODE_ROW = 1
@@ -18,7 +19,14 @@ local COORD_ROW = 3
 local STOP_ROW = 4
 local WAYPOINT_ROW = 5
 local WAYPOINT2_ROW = 6
-local READOUT_ROW = 9
+local EXTRA_ROW = 7
+local EDIT_HEADER_ROW = 8
+local EDIT_SEL_ROW = 9
+local EDIT_BTN_ROW = 10
+local READOUT_ROW = 12
+
+-- View-local selection for the waypoint editor.
+local selected = 1
 
 local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
     return {
@@ -40,12 +48,19 @@ local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
         Nearest = enum_next(),
         SaveRoute = enum_next(),
         LoadRoute = enum_next(),
+        Overlay = enum_next(),
+        ImportClipboard = enum_next(),
+        EditHeader = enum_next(),
+        SelSpinner = enum_next(4),
+        SelCoords = enum_next(),
+        MoveUp = enum_next(),
+        MoveDown = enum_next(),
+        DeleteSel = enum_next(),
+        InsertSel = enum_next(),
+        SetActive = enum_next(),
         ReadoutLabel = enum_next(),
-        Distance = enum_next(),
-        Angle = enum_next(),
-        Eta = enum_next(),
-        PathLen = enum_next(),
-        Position = enum_next(),
+        DistEta = enum_next(),
+        AngPath = enum_next(),
         Status = enum_next(),
     }
 end)
@@ -56,13 +71,15 @@ return {
         local theme = Styles.theme()
         local foreground_color = Drawing.foreground_color()
 
-        -- Backfill fields for presets saved before Auto-Route existed (deep_merge
-        -- does not seed new defaults into non-default presets).
+        -- Backfill fields for presets saved before Auto-Route existed.
         Settings.tas.target_x = Settings.tas.target_x or 0
         Settings.tas.target_z = Settings.tas.target_z or 0
         Settings.tas.target_stop_dist = Settings.tas.target_stop_dist or 0
         Settings.tas.waypoints = Settings.tas.waypoints or {}
         Settings.tas.waypoint_index = Settings.tas.waypoint_index or 1
+
+        local waypoints = Settings.tas.waypoints
+        local waypoint_count = #waypoints
 
         local function header(uid, row, text)
             ugui.label({
@@ -124,8 +141,7 @@ return {
             action.invoke(ACTION_SET_TARGET_TO_CURRENT_POS)
         end
 
-        -- Single-point target coordinate spinners. Untouched values keep their
-        -- float precision; interacting nudges by whole units.
+        -- Single-point target coordinate spinners.
         mono(UID.TargetXLabel, grid_rect(0, COORD_ROW, 1, 1), 'X')
         Settings.tas.target_x = ugui.spinner({
             uid = UID.TargetX,
@@ -135,7 +151,6 @@ return {
             minimum_value = -32768,
             maximum_value = 32768,
         })
-
         mono(UID.TargetZLabel, grid_rect(4, COORD_ROW, 1, 1), 'Z')
         Settings.tas.target_z = ugui.spinner({
             uid = UID.TargetZ,
@@ -156,7 +171,6 @@ return {
             minimum_value = 0,
             maximum_value = 32768,
         }))
-
         Settings.tas.waypoint_loop = ugui.toggle_button({
             uid = UID.Loop,
             rectangle = grid_rect(5, STOP_ROW, 3, 1),
@@ -172,7 +186,6 @@ return {
             }) then
             action.invoke(ACTION_ADD_WAYPOINT)
         end
-
         if ugui.button({
                 uid = UID.ClearWaypoints,
                 rectangle = grid_rect(3, WAYPOINT_ROW, 2, 1),
@@ -180,13 +193,11 @@ return {
             }) then
             action.invoke(ACTION_CLEAR_WAYPOINTS)
         end
-
-        local waypoint_count = #Settings.tas.waypoints
         local waypoint_index = waypoint_count > 0 and math.min(Settings.tas.waypoint_index, waypoint_count) or 0
         mono(UID.WaypointInfo, grid_rect(5, WAYPOINT_ROW, 3, 1),
             string.format(Locales.str('AUTOROUTE_WAYPOINTS'), waypoint_index, waypoint_count))
 
-        -- Waypoint management row.
+        -- Persistence row.
         if ugui.button({
                 uid = UID.RemoveLast,
                 rectangle = grid_rect(0, WAYPOINT2_ROW, 2, 1),
@@ -216,7 +227,91 @@ return {
             action.invoke(ACTION_LOAD_ROUTE)
         end
 
-        -- Live readouts.
+        -- Overlay toggle + clipboard import.
+        Settings.autoroute_overlay = ugui.toggle_button({
+            uid = UID.Overlay,
+            rectangle = grid_rect(0, EXTRA_ROW, 3, 1),
+            text = Locales.str('AUTOROUTE_OVERLAY'),
+            is_checked = Settings.autoroute_overlay ~= false,
+        })
+        if ugui.button({
+                uid = UID.ImportClipboard,
+                rectangle = grid_rect(3, EXTRA_ROW, 5, 1),
+                text = Locales.str('AUTOROUTE_IMPORT_CLIPBOARD'),
+            }) then
+            action.invoke(ACTION_IMPORT_CLIPBOARD)
+        end
+
+        -- Waypoint editor.
+        header(UID.EditHeader, EDIT_HEADER_ROW, Locales.str('AUTOROUTE_EDIT'))
+        selected = math.max(1, math.min(selected, math.max(1, waypoint_count)))
+        selected = math.floor(ugui.spinner({
+            uid = UID.SelSpinner,
+            is_enabled = waypoint_count > 0,
+            rectangle = grid_rect(0, EDIT_SEL_ROW, 2, 1),
+            value = selected,
+            increment = 1,
+            minimum_value = 1,
+            maximum_value = math.max(1, waypoint_count),
+        }))
+        selected = math.max(1, math.min(selected, math.max(1, waypoint_count)))
+
+        local sel_text = Locales.str('AUTOROUTE_NO_WAYPOINTS')
+        if waypoint_count > 0 then
+            local wp = waypoints[selected]
+            sel_text = string.format('#%d   X %s   Z %s', selected,
+                Formatter.u(wp.x, 1), Formatter.u(wp.z, 1))
+        end
+        mono(UID.SelCoords, grid_rect(2, EDIT_SEL_ROW, 6, 1), sel_text)
+
+        local bw = 1.6
+        if ugui.button({
+                uid = UID.MoveUp,
+                is_enabled = waypoint_count > 1 and selected > 1,
+                rectangle = grid_rect(0, EDIT_BTN_ROW, bw, 1),
+                text = '[icon:arrow_up]',
+            }) then
+            swap(waypoints, selected, selected - 1)
+            selected = selected - 1
+        end
+        if ugui.button({
+                uid = UID.MoveDown,
+                is_enabled = waypoint_count > 1 and selected < waypoint_count,
+                rectangle = grid_rect(bw, EDIT_BTN_ROW, bw, 1),
+                text = '[icon:arrow_down]',
+            }) then
+            swap(waypoints, selected, selected + 1)
+            selected = selected + 1
+        end
+        if ugui.button({
+                uid = UID.DeleteSel,
+                is_enabled = waypoint_count > 0,
+                rectangle = grid_rect(bw * 2, EDIT_BTN_ROW, bw, 1),
+                text = Locales.str('AUTOROUTE_DELETE'),
+            }) then
+            table.remove(waypoints, selected)
+            selected = math.max(1, math.min(selected, #waypoints))
+            Settings.tas.waypoint_index = math.max(1, math.min(Settings.tas.waypoint_index, math.max(1, #waypoints)))
+        end
+        if ugui.button({
+                uid = UID.InsertSel,
+                rectangle = grid_rect(bw * 3, EDIT_BTN_ROW, bw, 1),
+                text = Locales.str('AUTOROUTE_INSERT'),
+            }) then
+            local at = waypoint_count > 0 and (selected + 1) or 1
+            table.insert(waypoints, at, { x = Memory.current.mario_x, z = Memory.current.mario_z })
+            selected = at
+        end
+        if ugui.button({
+                uid = UID.SetActive,
+                is_enabled = waypoint_count > 0,
+                rectangle = grid_rect(bw * 4, EDIT_BTN_ROW, 8 - bw * 4, 1),
+                text = Locales.str('AUTOROUTE_SET_ACTIVE'),
+            }) then
+            Settings.tas.waypoint_index = selected
+        end
+
+        -- Compact live readouts.
         header(UID.ReadoutLabel, READOUT_ROW - 1, Locales.str('AUTOROUTE_READOUT'))
 
         local tx, tz = Engine.active_target()
@@ -227,29 +322,22 @@ return {
             angle = (angle + 32768) % 65536
         end
         local eta = Engine.eta_frames(distance, Memory.current.mario_h_speed or 0)
+        local eta_text = eta == math.huge and Locales.str('AUTOROUTE_ETA_NA') or (MoreMaths.round(eta, 0) .. 'f')
 
-        mono(UID.Distance, grid_rect(0, READOUT_ROW, 8, 1),
-            Locales.str('AUTOROUTE_DISTANCE') .. ': ' .. Formatter.u(distance, 3))
-        mono(UID.Angle, grid_rect(0, READOUT_ROW + 1, 8, 1),
-            Locales.str('AUTOROUTE_ANGLE') .. ': ' .. Formatter.angle(angle))
-        mono(UID.Eta, grid_rect(0, READOUT_ROW + 2, 8, 1),
-            Locales.str('AUTOROUTE_ETA') .. ': '
-            .. (eta == math.huge and Locales.str('AUTOROUTE_ETA_NA') or (MoreMaths.round(eta, 0) .. 'f')))
+        mono(UID.DistEta, grid_rect(0, READOUT_ROW, 8, 1),
+            Locales.str('AUTOROUTE_DISTANCE') .. ': ' .. Formatter.u(distance, 2)
+            .. '   ' .. Locales.str('AUTOROUTE_ETA') .. ': ' .. eta_text)
 
+        local path_text = ''
         if waypoint_count > 0 then
-            local remaining = Engine.path_remaining_length(Settings.tas.waypoints, waypoint_index,
+            local remaining = Engine.path_remaining_length(waypoints, waypoint_index,
                 Memory.current.mario_x or 0, Memory.current.mario_z or 0)
-            local total = Engine.path_total_length(Settings.tas.waypoints)
-            mono(UID.PathLen, grid_rect(0, READOUT_ROW + 3, 8, 1),
-                string.format(Locales.str('AUTOROUTE_PATH_LEN'),
-                    Formatter.u(remaining, 1), Formatter.u(total, 1)))
-        else
-            mono(UID.PathLen, grid_rect(0, READOUT_ROW + 3, 8, 1), '')
+            local total = Engine.path_total_length(waypoints)
+            path_text = '   ' .. string.format(Locales.str('AUTOROUTE_PATH_LEN'),
+                Formatter.u(remaining, 0), Formatter.u(total, 0))
         end
-
-        mono(UID.Position, grid_rect(0, READOUT_ROW + 4, 8, 1),
-            'X ' .. Formatter.u(Memory.current.mario_x or 0, 1)
-            .. '   Z ' .. Formatter.u(Memory.current.mario_z or 0, 1))
+        mono(UID.AngPath, grid_rect(0, READOUT_ROW + 1, 8, 1),
+            Locales.str('AUTOROUTE_ANGLE') .. ': ' .. Formatter.angle(angle) .. path_text)
 
         local status
         if Settings.tas.movement_mode ~= MovementModes.target_point then
@@ -259,6 +347,6 @@ return {
         else
             status = Locales.str('AUTOROUTE_STATUS_ROUTING')
         end
-        mono(UID.Status, grid_rect(0, READOUT_ROW + 5, 8, 1), status)
+        mono(UID.Status, grid_rect(0, READOUT_ROW + 2, 8, 1), status)
     end,
 }

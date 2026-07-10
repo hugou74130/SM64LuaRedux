@@ -225,6 +225,32 @@ function Engine.sanitize_waypoints(list)
 	return result
 end
 
+---Parses free-form coordinate text into waypoints. Each non-empty line is
+---scanned for numbers; a line with 3+ numbers is read as X, Y, Z (Y ignored, the
+---STROOP position format), and a line with exactly 2 numbers as X, Z. Lines with
+---fewer than two numbers are skipped. Tolerant of separators (spaces, commas,
+---semicolons, tabs, parentheses).
+---@param text string
+---@return table # array of { x, z }
+function Engine.parse_coordinate_text(text)
+	local result = {}
+	if type(text) ~= 'string' then
+		return result
+	end
+	for line in (text .. '\n'):gmatch('(.-)\n') do
+		local nums = {}
+		for token in line:gmatch('[-+]?%d*%.?%d+') do
+			nums[#nums + 1] = tonumber(token)
+		end
+		if #nums >= 3 then
+			result[#result + 1] = { x = nums[1], z = nums[3] }
+		elseif #nums == 2 then
+			result[#result + 1] = { x = nums[1], z = nums[2] }
+		end
+	end
+	return result
+end
+
 function Engine.stick_for_input_x(state)
 	return state.movement_mode == MovementModes.manual and state.manual_joystick_x or Joypad.input.X or 0
 end

@@ -150,6 +150,28 @@ check_num('sanitize entry1 x', clean[1].x, 1)
 check_num('sanitize entry2 z', clean[2].z, 6)
 check_num('sanitize non-table', #Engine.sanitize_waypoints('nope'), 0)
 
+-- parse_coordinate_text: STROOP-style "X Y Z" uses x and z (skips y).
+local p = Engine.parse_coordinate_text('1234.5 200 -678.9')
+check_num('parse xyz count', #p, 1)
+check_num('parse xyz x', p[1].x, 1234.5)
+check_num('parse xyz z', p[1].z, -678.9)
+
+-- Two numbers => x, z.
+p = Engine.parse_coordinate_text('10, 20')
+check_num('parse xz x', p[1].x, 10)
+check_num('parse xz z', p[1].z, 20)
+
+-- Multiple lines, mixed separators and parentheses; junk lines skipped.
+p = Engine.parse_coordinate_text('(1, 2, 3)\nheader line\n4;5;6\n\t-7\t8\t9\nonlyone 5\n')
+check_num('parse multiline count', #p, 3)
+check_num('parse multiline l1 x', p[1].x, 1)
+check_num('parse multiline l1 z', p[1].z, 3)
+check_num('parse multiline l2 z', p[2].z, 6)
+check_num('parse multiline l3 x', p[3].x, -7)
+
+-- Non-string input yields empty.
+check_num('parse non-string', #Engine.parse_coordinate_text(nil), 0)
+
 -- ---------------------------------------------------------------------------
 print(string.format('\n%d checks, %d failure(s)', checks, failures))
 if failures > 0 then
