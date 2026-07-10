@@ -33,8 +33,12 @@ just supplies a live goal angle instead of a static one.
    target, the stick is released so he coasts instead of overshooting. `0`
    disables this (Mario steers indefinitely).
 
-Hotkey: `Ctrl+5` toggles the Target Point mode (matching `Ctrl+1..4` for the
-other movement modes).
+Hotkeys (all reassignable in Settings → Hotkeys):
+
+- `Ctrl+5` toggles Target Point mode (matching `Ctrl+1..4` for the other modes).
+- `Ctrl+6` sets the single-point target to Mario's current position.
+- `Ctrl+7` appends a waypoint at Mario's current position.
+- `Ctrl+8` jumps the active waypoint to the one nearest Mario.
 
 ## Waypoint paths
 
@@ -114,6 +118,18 @@ The tab shows, in real time:
   angle-unit setting.
 - Mario's current **X / Z**.
 - A **status** line: off / routing / arrived.
+
+## Tests
+
+The geometry and route logic have an emulator-free unit test. From the repo root:
+
+```
+bash test/run.sh
+```
+
+This byte-compiles every Lua file (catching syntax errors) and runs
+`test/autoroute_geometry_test.lua`. The same checks run in CI on push via
+`.github/workflows/autoroute-tests.yml`.
 
 ## Notes and limits
 

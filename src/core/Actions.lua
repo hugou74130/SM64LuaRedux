@@ -140,6 +140,7 @@ actions[#actions + 1] = wrap_params({
 
 actions[#actions + 1] = wrap_params({
     path = ACTION_SET_TARGET_TO_CURRENT_POS,
+    hotkey = { ctrl = true, key = string.byte('6') },
     on_press = function()
         Memory.update()
         Settings.tas.target_x = Memory.current.mario_x
@@ -160,6 +161,7 @@ actions[#actions + 1] = wrap_params({
 
 actions[#actions + 1] = wrap_params({
     path = ACTION_ADD_WAYPOINT,
+    hotkey = { ctrl = true, key = string.byte('7') },
     on_press = function()
         Memory.update()
         Settings.tas.waypoints = Settings.tas.waypoints or {}
@@ -191,6 +193,7 @@ actions[#actions + 1] = wrap_params({
 
 actions[#actions + 1] = wrap_params({
     path = ACTION_JUMP_NEAREST_WAYPOINT,
+    hotkey = { ctrl = true, key = string.byte('8') },
     on_press = function()
         Memory.update()
         local i = Engine.nearest_waypoint_index(Settings.tas.waypoints,

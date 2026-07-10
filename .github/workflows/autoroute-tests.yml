@@ -1,0 +1,21 @@
+name: Auto-Route tests
+
+# Offline checks that do not require the emulator: Lua syntax for every source
+# file, plus the Auto-Route geometry unit test.
+
+on:
+  push:
+    branches: [lol]
+  pull_request:
+
+jobs:
+  lua-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.4
+        run: sudo apt-get update && sudo apt-get install -y lua5.4
+
+      - name: Run offline checks
+        run: bash test/run.sh
