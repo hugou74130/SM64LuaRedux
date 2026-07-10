@@ -39,6 +39,7 @@ Hotkeys (all reassignable in Settings → Hotkeys):
 - `Ctrl+6` sets the single-point target to Mario's current position.
 - `Ctrl+7` appends a waypoint at Mario's current position.
 - `Ctrl+8` jumps the active waypoint to the one nearest Mario.
+- `Ctrl+9` reverses the route (turns a one-way path into the return trip).
 
 ## Waypoint paths
 

@@ -124,6 +124,9 @@ local function draw_route()
     end
 
     local y = Memory.current.mario_y
+    if y ~= y then
+        return -- Mario position not yet valid (NaN); nothing sensible to draw.
+    end
 
     -- Build the ordered list of route points (waypoints, or the single point).
     local points = {}

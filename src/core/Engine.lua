@@ -225,6 +225,22 @@ function Engine.sanitize_waypoints(list)
 	return result
 end
 
+---Returns a new array with the waypoints in reverse order (useful for turning a
+---one-way route into the return trip). Does not mutate the input.
+---@param waypoints table
+---@return table
+function Engine.reverse_waypoints(waypoints)
+	local result = {}
+	if type(waypoints) ~= 'table' then
+		return result
+	end
+	local n = #waypoints
+	for i = n, 1, -1 do
+		result[#result + 1] = { x = waypoints[i].x, z = waypoints[i].z }
+	end
+	return result
+end
+
 ---Parses free-form coordinate text into waypoints. Each non-empty line is
 ---scanned for numbers; a line with 3+ numbers is read as X, Y, Z (Y ignored, the
 ---STROOP position format), and a line with exactly 2 numbers as X, Z. Lines with

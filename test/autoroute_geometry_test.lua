@@ -172,6 +172,25 @@ check_num('parse multiline l3 x', p[3].x, -7)
 -- Non-string input yields empty.
 check_num('parse non-string', #Engine.parse_coordinate_text(nil), 0)
 
+-- reverse_waypoints: order flipped, input not mutated.
+local orig = { { x = 1, z = 1 }, { x = 2, z = 2 }, { x = 3, z = 3 } }
+local rev = Engine.reverse_waypoints(orig)
+check_num('reverse count', #rev, 3)
+check_num('reverse first x', rev[1].x, 3)
+check_num('reverse last x', rev[3].x, 1)
+check_num('reverse no mutation', orig[1].x, 1)
+check_num('reverse non-table', #Engine.reverse_waypoints(nil), 0)
+check_num('reverse empty', #Engine.reverse_waypoints({}), 0)
+
+-- active_target clamps an out-of-range waypoint_index.
+Settings.tas.waypoints = { { x = 7, z = 8 } }
+Settings.tas.waypoint_index = 99
+local cx, cz = Engine.active_target()
+check_num('active_target clamps x', cx, 7)
+check_num('active_target clamps z', cz, 8)
+Settings.tas.waypoints = {}
+Settings.tas.waypoint_index = 1
+
 -- ---------------------------------------------------------------------------
 print(string.format('\n%d checks, %d failure(s)', checks, failures))
 if failures > 0 then

@@ -23,6 +23,7 @@ ACTION_JUMP_NEAREST_WAYPOINT = ROOT .. 'Auto-Route > Jump to Nearest Waypoint'
 ACTION_SAVE_ROUTE = ROOT .. 'Auto-Route > Save Route'
 ACTION_LOAD_ROUTE = ROOT .. 'Auto-Route > Load Route'
 ACTION_IMPORT_CLIPBOARD = ROOT .. 'Auto-Route > Import Waypoints from Clipboard'
+ACTION_REVERSE_ROUTE = ROOT .. 'Auto-Route > Reverse Route'
 ROUTE_PATH = 'route.json'
 ACTION_SET_GOAL_ANGLE_TO_FACING_YAW = ROOT .. 'Set Angle to Facing Yaw'
 ACTION_SET_GOAL_ANGLE_TO_INTENDED_YAW = ROOT .. 'Set Angle to Intended Yaw'
@@ -261,6 +262,15 @@ actions[#actions + 1] = wrap_params({
         Settings.tas.waypoints = parsed
         Settings.tas.waypoint_index = 1
         print('Auto-Route: imported ' .. #parsed .. ' waypoint(s) from clipboard.')
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_REVERSE_ROUTE,
+    hotkey = { ctrl = true, key = string.byte('9') },
+    on_press = function()
+        Settings.tas.waypoints = Engine.reverse_waypoints(Settings.tas.waypoints or {})
+        Settings.tas.waypoint_index = 1
     end,
 })
 
