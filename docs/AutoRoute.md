@@ -51,6 +51,17 @@ The reach radius for advancing between waypoints is the **Stop dist** value, or 
 small default (25 units) when Stop dist is 0. The `Waypoint i/N` readout shows
 progress. When any waypoints exist they take priority over the single X/Z point.
 
+### Managing a path
+
+- **Remove Last** deletes the most recently added waypoint.
+- **Nearest** jumps the active index to the waypoint closest to Mario — handy
+  after a savestate load to resync the route to where he actually is.
+- **Save Route** / **Load Route** write and read the path as JSON in
+  `route.json` (next to the script), so you can keep and share routes. Malformed
+  files are rejected and non-numeric entries are dropped on load.
+- The **Path** readout shows remaining length (Mario → current waypoint → end)
+  over the total path length.
+
 ## Extras
 
 - **ETA** — the readout estimates how many frames Mario needs to reach the active

@@ -154,6 +154,77 @@ function Engine.eta_frames(distance, h_speed)
 	return distance / s
 end
 
+---Total straight-line length of a waypoint path (sum of segment lengths).
+---@param waypoints table # array of { x, z }
+---@return number
+function Engine.path_total_length(waypoints)
+	if not waypoints or #waypoints < 2 then
+		return 0
+	end
+	local total = 0
+	for i = 2, #waypoints do
+		total = total + Engine.distance_to_point(
+			waypoints[i - 1].x, waypoints[i - 1].z, waypoints[i].x, waypoints[i].z)
+	end
+	return total
+end
+
+---Remaining length of a non-looping path: from (mx, mz) to the current waypoint,
+---plus every remaining segment to the end.
+---@param waypoints table
+---@param index integer # 1-based current waypoint
+---@param mx number
+---@param mz number
+---@return number
+function Engine.path_remaining_length(waypoints, index, mx, mz)
+	if not waypoints or #waypoints == 0 then
+		return 0
+	end
+	index = math.max(1, math.min(index, #waypoints))
+	local total = Engine.distance_to_point(mx, mz, waypoints[index].x, waypoints[index].z)
+	for i = index + 1, #waypoints do
+		total = total + Engine.distance_to_point(
+			waypoints[i - 1].x, waypoints[i - 1].z, waypoints[i].x, waypoints[i].z)
+	end
+	return total
+end
+
+---Index of the waypoint nearest to (x, z). Returns nil for an empty path.
+---@param waypoints table
+---@param x number
+---@param z number
+---@return integer?
+function Engine.nearest_waypoint_index(waypoints, x, z)
+	if not waypoints or #waypoints == 0 then
+		return nil
+	end
+	local best_index, best_dist = 1, math.huge
+	for i = 1, #waypoints do
+		local d = Engine.distance_to_point(x, z, waypoints[i].x, waypoints[i].z)
+		if d < best_dist then
+			best_index, best_dist = i, d
+		end
+	end
+	return best_index
+end
+
+---Validates and normalizes a decoded waypoint list (e.g. loaded from a route
+---file), keeping only entries with numeric x and z. Always returns a table.
+---@param list any
+---@return table
+function Engine.sanitize_waypoints(list)
+	local result = {}
+	if type(list) ~= 'table' then
+		return result
+	end
+	for _, wp in ipairs(list) do
+		if type(wp) == 'table' and type(wp.x) == 'number' and type(wp.z) == 'number' then
+			result[#result + 1] = { x = wp.x, z = wp.z }
+		end
+	end
+	return result
+end
+
 function Engine.stick_for_input_x(state)
 	return state.movement_mode == MovementModes.manual and state.manual_joystick_x or Joypad.input.X or 0
 end

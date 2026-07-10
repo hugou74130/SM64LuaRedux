@@ -18,6 +18,11 @@ ACTION_SET_TARGET_TO_CURRENT_POS = ROOT .. 'Auto-Route > Set Target to Current P
 ACTION_TOGGLE_TARGET_INVERT = ROOT .. 'Auto-Route > Invert Target Angle'
 ACTION_ADD_WAYPOINT = ROOT .. 'Auto-Route > Add Waypoint at Current Position'
 ACTION_CLEAR_WAYPOINTS = ROOT .. 'Auto-Route > Clear Waypoints'
+ACTION_REMOVE_LAST_WAYPOINT = ROOT .. 'Auto-Route > Remove Last Waypoint'
+ACTION_JUMP_NEAREST_WAYPOINT = ROOT .. 'Auto-Route > Jump to Nearest Waypoint'
+ACTION_SAVE_ROUTE = ROOT .. 'Auto-Route > Save Route'
+ACTION_LOAD_ROUTE = ROOT .. 'Auto-Route > Load Route'
+ROUTE_PATH = 'route.json'
 ACTION_SET_GOAL_ANGLE_TO_FACING_YAW = ROOT .. 'Set Angle to Facing Yaw'
 ACTION_SET_GOAL_ANGLE_TO_INTENDED_YAW = ROOT .. 'Set Angle to Intended Yaw'
 ACTION_DECREMENT_ANGLE = ROOT .. 'Angle -1'
@@ -169,6 +174,64 @@ actions[#actions + 1] = wrap_params({
     on_press = function()
         Settings.tas.waypoints = {}
         Settings.tas.waypoint_index = 1
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_REMOVE_LAST_WAYPOINT,
+    on_press = function()
+        local wp = Settings.tas.waypoints
+        if wp and #wp > 0 then
+            wp[#wp] = nil
+            Settings.tas.waypoint_index = math.max(1, math.min(Settings.tas.waypoint_index or 1, #wp))
+        end
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_JUMP_NEAREST_WAYPOINT,
+    on_press = function()
+        Memory.update()
+        local i = Engine.nearest_waypoint_index(Settings.tas.waypoints,
+            Memory.current.mario_x, Memory.current.mario_z)
+        if i then
+            Settings.tas.waypoint_index = i
+        end
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_SAVE_ROUTE,
+    on_press = function()
+        local file = io.open(ROUTE_PATH, 'w')
+        if not file then
+            print('Auto-Route: failed to open ' .. ROUTE_PATH .. ' for writing.')
+            return
+        end
+        file:write(json.encode(Settings.tas.waypoints or {}))
+        io.close(file)
+        print('Auto-Route: saved ' .. #(Settings.tas.waypoints or {}) .. ' waypoint(s) to ' .. ROUTE_PATH)
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_LOAD_ROUTE,
+    on_press = function()
+        local file = io.open(ROUTE_PATH, 'r')
+        if not file then
+            print('Auto-Route: no ' .. ROUTE_PATH .. ' to load.')
+            return
+        end
+        local encoded = file:read('a')
+        io.close(file)
+        local ok, decoded = pcall(json.decode, encoded)
+        if not ok then
+            print('Auto-Route: ' .. ROUTE_PATH .. ' is not valid JSON.')
+            return
+        end
+        Settings.tas.waypoints = Engine.sanitize_waypoints(decoded)
+        Settings.tas.waypoint_index = 1
+        print('Auto-Route: loaded ' .. #Settings.tas.waypoints .. ' waypoint(s) from ' .. ROUTE_PATH)
     end,
 })
 

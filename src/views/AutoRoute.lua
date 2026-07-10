@@ -17,7 +17,8 @@ local CAPTURE_ROW = 2
 local COORD_ROW = 3
 local STOP_ROW = 4
 local WAYPOINT_ROW = 5
-local READOUT_ROW = 8
+local WAYPOINT2_ROW = 6
+local READOUT_ROW = 9
 
 local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
     return {
@@ -35,10 +36,15 @@ local UID = UIDProvider.allocate_once('AutoRoute', function(enum_next)
         AddWaypoint = enum_next(),
         ClearWaypoints = enum_next(),
         WaypointInfo = enum_next(),
+        RemoveLast = enum_next(),
+        Nearest = enum_next(),
+        SaveRoute = enum_next(),
+        LoadRoute = enum_next(),
         ReadoutLabel = enum_next(),
         Distance = enum_next(),
         Angle = enum_next(),
         Eta = enum_next(),
+        PathLen = enum_next(),
         Position = enum_next(),
         Status = enum_next(),
     }
@@ -180,6 +186,36 @@ return {
         mono(UID.WaypointInfo, grid_rect(5, WAYPOINT_ROW, 3, 1),
             string.format(Locales.str('AUTOROUTE_WAYPOINTS'), waypoint_index, waypoint_count))
 
+        -- Waypoint management row.
+        if ugui.button({
+                uid = UID.RemoveLast,
+                rectangle = grid_rect(0, WAYPOINT2_ROW, 2, 1),
+                text = Locales.str('AUTOROUTE_REMOVE_LAST'),
+            }) then
+            action.invoke(ACTION_REMOVE_LAST_WAYPOINT)
+        end
+        if ugui.button({
+                uid = UID.Nearest,
+                rectangle = grid_rect(2, WAYPOINT2_ROW, 2, 1),
+                text = Locales.str('AUTOROUTE_NEAREST'),
+            }) then
+            action.invoke(ACTION_JUMP_NEAREST_WAYPOINT)
+        end
+        if ugui.button({
+                uid = UID.SaveRoute,
+                rectangle = grid_rect(4, WAYPOINT2_ROW, 2, 1),
+                text = Locales.str('AUTOROUTE_SAVE_ROUTE'),
+            }) then
+            action.invoke(ACTION_SAVE_ROUTE)
+        end
+        if ugui.button({
+                uid = UID.LoadRoute,
+                rectangle = grid_rect(6, WAYPOINT2_ROW, 2, 1),
+                text = Locales.str('AUTOROUTE_LOAD_ROUTE'),
+            }) then
+            action.invoke(ACTION_LOAD_ROUTE)
+        end
+
         -- Live readouts.
         header(UID.ReadoutLabel, READOUT_ROW - 1, Locales.str('AUTOROUTE_READOUT'))
 
@@ -199,7 +235,19 @@ return {
         mono(UID.Eta, grid_rect(0, READOUT_ROW + 2, 8, 1),
             Locales.str('AUTOROUTE_ETA') .. ': '
             .. (eta == math.huge and Locales.str('AUTOROUTE_ETA_NA') or (MoreMaths.round(eta, 0) .. 'f')))
-        mono(UID.Position, grid_rect(0, READOUT_ROW + 3, 8, 1),
+
+        if waypoint_count > 0 then
+            local remaining = Engine.path_remaining_length(Settings.tas.waypoints, waypoint_index,
+                Memory.current.mario_x or 0, Memory.current.mario_z or 0)
+            local total = Engine.path_total_length(Settings.tas.waypoints)
+            mono(UID.PathLen, grid_rect(0, READOUT_ROW + 3, 8, 1),
+                string.format(Locales.str('AUTOROUTE_PATH_LEN'),
+                    Formatter.u(remaining, 1), Formatter.u(total, 1)))
+        else
+            mono(UID.PathLen, grid_rect(0, READOUT_ROW + 3, 8, 1), '')
+        end
+
+        mono(UID.Position, grid_rect(0, READOUT_ROW + 4, 8, 1),
             'X ' .. Formatter.u(Memory.current.mario_x or 0, 1)
             .. '   Z ' .. Formatter.u(Memory.current.mario_z or 0, 1))
 
@@ -211,6 +259,6 @@ return {
         else
             status = Locales.str('AUTOROUTE_STATUS_ROUTING')
         end
-        mono(UID.Status, grid_rect(0, READOUT_ROW + 4, 8, 1), status)
+        mono(UID.Status, grid_rect(0, READOUT_ROW + 5, 8, 1), status)
     end,
 }

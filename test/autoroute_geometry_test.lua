@@ -126,6 +126,30 @@ check_num('advance 3/3 loop not complete', complete and 1 or 0, 0)
 check_num('eta 100u @ 25u/f = 4f', Engine.eta_frames(100, 25), 4)
 check_num('eta stopped is huge', Engine.eta_frames(100, 0) == math.huge and 1 or 0, 1)
 
+-- path_total_length: sum of segments (3-4-5 triangle perimeter minus hypotenuse).
+local square = { { x = 0, z = 0 }, { x = 0, z = 10 }, { x = 10, z = 10 } }
+check_num('path_total_length', Engine.path_total_length(square), 20)
+check_num('path_total_length single', Engine.path_total_length({ { x = 1, z = 1 } }), 0)
+check_num('path_total_length empty', Engine.path_total_length({}), 0)
+
+-- path_remaining_length: from position to current waypoint + rest.
+-- At (0, -5), heading to waypoint 1 (0,0): 5 + segment1 (10) + segment2 (10) = 25.
+check_num('path_remaining full', Engine.path_remaining_length(square, 1, 0, -5), 25)
+-- Already at last waypoint (10,10), index 3: just distance to it.
+check_num('path_remaining last', Engine.path_remaining_length(square, 3, 10, 0), 10)
+
+-- nearest_waypoint_index.
+check_num('nearest is 2', Engine.nearest_waypoint_index(square, 1, 9), 2)
+check_num('nearest empty is nil', Engine.nearest_waypoint_index({}, 0, 0) == nil and 1 or 0, 1)
+
+-- sanitize_waypoints: drop malformed entries, keep numeric x/z.
+local dirty = { { x = 1, z = 2 }, { x = 'bad', z = 3 }, { z = 4 }, 'nope', { x = 5, z = 6 } }
+local clean = Engine.sanitize_waypoints(dirty)
+check_num('sanitize keeps 2', #clean, 2)
+check_num('sanitize entry1 x', clean[1].x, 1)
+check_num('sanitize entry2 z', clean[2].z, 6)
+check_num('sanitize non-table', #Engine.sanitize_waypoints('nope'), 0)
+
 -- ---------------------------------------------------------------------------
 print(string.format('\n%d checks, %d failure(s)', checks, failures))
 if failures > 0 then
