@@ -13,6 +13,9 @@ ACTION_SET_MOVEMENT_MODE_DISABLED = ACTION_MOVEMENT_MODE .. ' > Disabled'
 ACTION_SET_MOVEMENT_MODE_MATCH_YAW = ACTION_MOVEMENT_MODE .. ' > Match Yaw'
 ACTION_SET_MOVEMENT_MODE_REVERSE_YAW = ACTION_MOVEMENT_MODE .. ' > Reverse Yaw'
 ACTION_SET_MOVEMENT_MODE_MATCH_ANGLE = ACTION_MOVEMENT_MODE .. ' > Match Angle'
+ACTION_SET_MOVEMENT_MODE_TARGET_POINT = ACTION_MOVEMENT_MODE .. ' > Target Point'
+ACTION_SET_TARGET_TO_CURRENT_POS = ROOT .. 'Auto-Route > Set Target to Current Position'
+ACTION_TOGGLE_TARGET_INVERT = ROOT .. 'Auto-Route > Invert Target Angle'
 ACTION_SET_GOAL_ANGLE_TO_FACING_YAW = ROOT .. 'Set Angle to Facing Yaw'
 ACTION_SET_GOAL_ANGLE_TO_INTENDED_YAW = ROOT .. 'Set Angle to Intended Yaw'
 ACTION_DECREMENT_ANGLE = ROOT .. 'Angle -1'
@@ -112,6 +115,38 @@ actions[#actions + 1] = wrap_params({
     end,
     get_active = function()
         return Settings.tas.movement_mode == MovementModes.match_angle
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_SET_MOVEMENT_MODE_TARGET_POINT,
+    hotkey = { ctrl = true, key = string.byte('5') },
+    on_press = function()
+        Settings.tas.movement_mode = MovementModes.target_point
+        action.notify_active_changed(ACTION_MOVEMENT_MODE .. '>*')
+    end,
+    get_active = function()
+        return Settings.tas.movement_mode == MovementModes.target_point
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_SET_TARGET_TO_CURRENT_POS,
+    on_press = function()
+        Memory.update()
+        Settings.tas.target_x = Memory.current.mario_x
+        Settings.tas.target_z = Memory.current.mario_z
+    end,
+})
+
+actions[#actions + 1] = wrap_params({
+    path = ACTION_TOGGLE_TARGET_INVERT,
+    on_press = function()
+        Settings.tas.target_invert = not Settings.tas.target_invert
+        action.notify_active_changed(ACTION_TOGGLE_TARGET_INVERT)
+    end,
+    get_active = function()
+        return Settings.tas.target_invert
     end,
 })
 

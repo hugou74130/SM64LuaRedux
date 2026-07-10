@@ -19,8 +19,21 @@ return {
     SEMANTIC_WORKFLOW_TAB_NAME = 'Semantic Workflow',
     SETTINGS_TAB_NAME = 'Settings',
     TOOLS_TAB_NAME = 'Tools',
+    AUTOROUTE_TAB_NAME = 'Auto-Route',
     TIMER_TAB_NAME = 'Timer',
     PRESET = 'Preset ',
+    -- Auto-Route Tab
+    AUTOROUTE_HEADER = 'Target Point Steering',
+    AUTOROUTE_MODE = 'Route To Target',
+    AUTOROUTE_INVERT = 'Invert 180°',
+    AUTOROUTE_SET_TARGET = 'Set Target To Current Position',
+    AUTOROUTE_STOP_DIST = 'Stop dist',
+    AUTOROUTE_READOUT = 'Live Readout',
+    AUTOROUTE_DISTANCE = 'Distance',
+    AUTOROUTE_ANGLE = 'Angle to target',
+    AUTOROUTE_STATUS_OFF = 'Off — enable "Route To Target" to steer.',
+    AUTOROUTE_STATUS_ROUTING = 'Routing towards target…',
+    AUTOROUTE_STATUS_ARRIVED = 'Arrived — within stop distance.',
     -- Preset Context Menu
     PRESET_CONTEXT_MENU_DELETE_ALL = 'Delete All',
     -- TAS Tab

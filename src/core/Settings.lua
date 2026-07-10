@@ -31,6 +31,11 @@ function NewTASState()
         atan_r = 1.0,
         atan_d = 0.0,
         atan_n = 10,
+        -- Auto-Route (target_point movement mode)
+        target_x = 0,
+        target_z = 0,
+        target_invert = false,
+        target_stop_dist = 0,
     }
 end
 

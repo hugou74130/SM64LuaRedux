@@ -59,7 +59,50 @@ MovementModes = {
 	match_yaw = 3,
 	reverse_yaw = 4,
 	match_angle = 5,
+	target_point = 6,
 }
+
+---SM64-style `atan2s(z, x)`: returns the unsigned 16-bit world yaw (0..65535)
+---for a direction whose Z component is `z` and X component is `x`.
+---
+---In SM64 forward motion is `x += vel * sins(yaw)`, `z += vel * coss(yaw)`, so the
+---yaw pointing along `(x, z)` is `atan2(x, z)` — note the game's argument order is the
+---mirror of C's `atan2`. This matches Mario's facing/intended yaw space, so the result
+---can be fed straight into the angle optimizer alongside `camera_angle`.
+---@param z number # Z component of the direction
+---@param x number # X component of the direction
+---@return integer # angle in the [0, 65536) u16 range
+function Engine.atan2s(z, x)
+	return math.floor(math.atan2(x, z) * 32768 / math.pi + 0.5) % 65536
+end
+
+---Computes the world yaw (u16) pointing from (mx, mz) towards (tx, tz).
+---@param mx number # source X
+---@param mz number # source Z
+---@param tx number # target X
+---@param tz number # target Z
+---@return integer # world yaw in the [0, 65536) u16 range
+function Engine.angle_to_point(mx, mz, tx, tz)
+	return Engine.atan2s(tz - mz, tx - mx)
+end
+
+---Computes the horizontal (XZ) distance between (mx, mz) and (tx, tz).
+---@param mx number
+---@param mz number
+---@param tx number
+---@param tz number
+---@return number
+function Engine.distance_to_point(mx, mz, tx, tz)
+	return math.sqrt((tx - mx) ^ 2 + (tz - mz) ^ 2)
+end
+
+---Distance in game units from Mario to the currently configured Auto-Route target.
+---@return number
+function Engine.distance_to_target()
+	return Engine.distance_to_point(
+		Memory.current.mario_x, Memory.current.mario_z,
+		Settings.tas.target_x, Settings.tas.target_z)
+end
 
 function Engine.stick_for_input_x(state)
 	return state.movement_mode == MovementModes.manual and state.manual_joystick_x or Joypad.input.X or 0
@@ -166,6 +209,14 @@ Engine.inputsForAngle = function(goal, curr_input)
 	corrected_facing_yaw = Memory.current.mario_facing_yaw
 	if (Memory.current.camera_flags % 4 < 2 and Memory.current.mario_pressed_buttons % 16 > 7 and Memory.current.mario_held_buttons < 128 and curr_input.A and (Memory.current.mario_animation == 127 or Memory.current.mario_animation == 128)) then
 		corrected_facing_yaw = Memory.current.mario_gfx_angle
+	end
+	if (Settings.tas.movement_mode == MovementModes.target_point) then
+		-- Auto-Route: steer straight towards the configured world coordinate.
+		goal = Engine.angle_to_point(Memory.current.mario_x, Memory.current.mario_z,
+			Settings.tas.target_x, Settings.tas.target_z)
+		if (Settings.tas.target_invert) then
+			goal = (goal + 32768) % 65536
+		end
 	end
 	if (Settings.tas.movement_mode == MovementModes.match_yaw) then
 		goal = corrected_facing_yaw

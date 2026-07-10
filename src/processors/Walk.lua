@@ -14,6 +14,17 @@ return {
             return Joypad.input
         end
         Memory.update()
+
+        -- Auto-Route: once within the stop radius of the target, release the stick so
+        -- Mario coasts/decelerates instead of overshooting the coordinate.
+        if Settings.tas.movement_mode == MovementModes.target_point
+            and Settings.tas.target_stop_dist > 0
+            and Engine.distance_to_target() <= Settings.tas.target_stop_dist then
+            input.X = 0
+            input.Y = 0
+            return input
+        end
+
         local result = Engine.inputsForAngle(Settings.tas.goal_angle, input)
         if Settings.tas.goal_mag then
             Engine.scaleInputsForMagnitude(result, Settings.tas.goal_mag, Settings.tas.high_magnitude)

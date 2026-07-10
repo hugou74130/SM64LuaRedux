@@ -19,8 +19,21 @@ return {
     SEMANTIC_WORKFLOW_TAB_NAME = 'Flux Sémantique',
     SETTINGS_TAB_NAME = 'Paramètres',
     TOOLS_TAB_NAME = 'Outils',
+    AUTOROUTE_TAB_NAME = 'Auto-Route',
     TIMER_TAB_NAME = 'Chronomètre',
     PRESET = 'Préréglage ',
+    -- Auto-Route Tab
+    AUTOROUTE_HEADER = 'Guidage vers un point',
+    AUTOROUTE_MODE = 'Aller vers la cible',
+    AUTOROUTE_INVERT = 'Inverser 180°',
+    AUTOROUTE_SET_TARGET = 'Définir la cible sur la position actuelle',
+    AUTOROUTE_STOP_DIST = 'Dist. arrêt',
+    AUTOROUTE_READOUT = 'Lecture en direct',
+    AUTOROUTE_DISTANCE = 'Distance',
+    AUTOROUTE_ANGLE = 'Angle vers la cible',
+    AUTOROUTE_STATUS_OFF = 'Inactif — active « Aller vers la cible ».',
+    AUTOROUTE_STATUS_ROUTING = 'En route vers la cible…',
+    AUTOROUTE_STATUS_ARRIVED = 'Arrivé — dans la distance d\'arrêt.',
     -- Preset Context Menu
     PRESET_CONTEXT_MENU_DELETE_ALL = 'Tout supprimer',
     -- TAS Tab
