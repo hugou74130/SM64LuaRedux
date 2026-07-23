@@ -63,6 +63,14 @@ function cls_sheet:set_base_sheet(base_sheet) end
 ---Retrieves whether this sheet or any of its ancestors have changes that may change the outcome of [run_to_preview](lua://cls_sheet.run_to_preview).
 function cls_sheet:invalidated() end
 
+---Writes a bruteforce result INTO the sheet: replaces the semantic sections with a single
+---"Bruteforced" section of frame-exact inputs (real, editable, persisted content).
+---@param inputs table[] The frame-exact SectionInputs (from Bruteforce.to_overrides).
+function cls_sheet:apply_optimized_inputs(inputs) end
+
+---Resets this sheet's playback counters to the start (used by the bruteforcer's baseline capture).
+function cls_sheet:reset_playback() end
+
 __impl = cls_sheet
 dofile(views_path .. 'SemanticWorkflow/Implementations/Sheet.lua')
 __impl = nil

@@ -44,6 +44,8 @@ function __impl.new(name, create_savestate)
         save = __impl.save,
         load = __impl.load,
         invalidated = __impl.invalidated,
+        apply_optimized_inputs = __impl.apply_optimized_inputs,
+        reset_playback = __impl.reset_playback,
     }
     if create_savestate then
         savestate.do_memory('', 'save', function(result, data) new_instance._savestate = data end)
@@ -179,7 +181,6 @@ end
 function __impl:run_to_preview(from_base)
     self._invalidated = true
     if self.busy or #self.sections == 0 then return end
-
     run_to_preview_internal(self, from_base)
 end
 
@@ -259,5 +260,30 @@ end
 function __impl:set_base_sheet(sheet)
     self._base_sheet = sheet
     self._savestate = nil
+end
+
+---Writes a bruteforce result INTO the sheet: the semantic sections are replaced by a single
+---"Bruteforced" section holding one frame-exact input per optimized frame (from
+---Bruteforce.to_overrides: manual tas_state + joy, timeout 1). This makes the optimization the
+---sheet's REAL content — visible and editable in the input list, persisted to the .sws on save, and
+---played through the normal semantic pipeline, so chaining works unchanged (the next sheet's start
+---savestate is built from these faster frames). Destructive by design: the previous semantic
+---sections are discarded (the .sws on disk keeps the old version until the project is saved).
+---@param inputs table[] The frame-exact SectionInputs (from Bruteforce.to_overrides).
+function __impl:apply_optimized_inputs(inputs)
+    local section = Section.new('Bruteforced')
+    section.inputs = inputs
+    self.sections = { section }
+    -- Point the selection at the new content: preview at the last input so "run to preview" plays
+    -- the whole optimized segment, exactly like the capture measured it.
+    self.active_input = { section_index = 1, input_index = 1 }
+    self.preview_input = { section_index = 1, input_index = #inputs }
+    self._invalidated = true -- the chain must re-run with the faster frames
+end
+
+---Resets this sheet's playback counters to the start (public wrapper over the internal reset), so the
+---bruteforcer can replay the sheet from its beginning during baseline capture.
+function __impl:reset_playback()
+    reset_counters(self)
 end
 

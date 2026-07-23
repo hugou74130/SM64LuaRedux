@@ -30,6 +30,7 @@ local UID = UIDProvider.allocate_once('ProjectTab', function(enum_next)
         ConfirmationNo = enum_next(),
         ConfirmationText = enum_next(),
         NoSheetsLabel = enum_next(),
+        BruteforceSheet = enum_next(),
     }
 end)
 
@@ -177,6 +178,27 @@ function __impl.render(draw)
             is_enabled = main_gui_enabled() and SemanticWorkflowProject.project_location ~= nil,
         }) then
         SemanticWorkflowDialog = RenderConfirmPurgeDialog
+    end
+
+    -- Bruteforce the CURRENT sheet: shave frames off the action you just finished, then apply the gain
+    -- so the next action chains from the faster state. Acts on the current sheet (which has just run to
+    -- its end), so no per-sheet-row button is needed. Progress + Apply live in the Bruteforce tab.
+    local bf = BruteforceDriver
+    local bf_busy = bf ~= nil and bf.active
+    if ugui.button({
+            uid = UID.BruteforceSheet,
+            rectangle = grid_rect(6, top + 1, 2, Gui.MEDIUM_CONTROL_HEIGHT),
+            text = bf_busy and Locales.str('SEMANTIC_WORKFLOW_PROJECT_BRUTEFORCE_STOP')
+                or Locales.str('SEMANTIC_WORKFLOW_PROJECT_BRUTEFORCE'),
+            tooltip = Locales.str('SEMANTIC_WORKFLOW_PROJECT_BRUTEFORCE_TOOL_TIP'),
+            is_enabled = main_gui_enabled() and bf ~= nil
+                and (bf_busy or SemanticWorkflowProject.current ~= nil),
+        }) then
+        if bf_busy then
+            bf.stop()
+        else
+            bf.start_for_sheet(SemanticWorkflowProject.current)
+        end
     end
 
     local available_sheets = {}

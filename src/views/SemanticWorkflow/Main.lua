@@ -153,6 +153,12 @@ end
 ---
 ---@return SectionInputs|nil override The inputs to apply for the current frame.
 function CurrentSemanticWorkflowOverride()
+    -- While a bruteforce search is running, the driver owns the controller: the semantic sheet must not
+    -- also emit inputs (or it would fight the candidate replay and pause the emulator at its preview).
+    -- Exception: the 'capture' phase, where the sheet is deliberately replayed to measure the baseline.
+    if BruteforceDriver ~= nil and BruteforceDriver.active and BruteforceDriver.phase ~= 'capture' then
+        return nil
+    end
     local current_sheet = SemanticWorkflowProject.current
     return current_sheet and current_sheet:evaluate_frame() or nil
 end

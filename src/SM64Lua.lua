@@ -45,6 +45,7 @@ dofile(core_path .. 'RNG.lua')
 dofile(core_path .. 'Joypad.lua')
 dofile(core_path .. 'Angles.lua')
 dofile(core_path .. 'Engine.lua')
+dofile(core_path .. 'Bruteforce.lua')
 dofile(core_path .. 'MoreMaths.lua')
 dofile(core_path .. 'WorldVisualizer.lua')
 dofile(core_path .. 'MiniVisualizer.lua')
@@ -74,6 +75,7 @@ local views = {
     dofile(views_path .. 'Settings.lua'),
     dofile(views_path .. 'Tools.lua'),
     dofile(views_path .. 'Timer.lua'),
+    dofile(views_path .. 'Bruteforce.lua'),
 }
 
 local semantic_workflow = dofile(processors_path .. 'SemanticWorkflow.lua')
@@ -84,6 +86,7 @@ local processors = {
     dofile(processors_path .. 'Wallkicker.lua'),
     dofile(processors_path .. 'Framewalk.lua'),
     semantic_workflow.readback,
+    dofile(processors_path .. 'Bruteforce.lua'),
 }
 
 Notifications = dofile(views_path .. 'Notifications.lua')

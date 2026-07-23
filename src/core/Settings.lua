@@ -85,6 +85,13 @@ Settings = {
         fast_foward = true,
         default_section_timeout = 60,
     },
+    bruteforce = {
+        -- perturbation strength is auto-managed by the search core (annealing + stagnation pulse)
+        budget = 2000,           -- maximum number of candidates to try per search
+        fast_forward = true,     -- run the search at UltraFastForward speed
+        goal_radius = 50,        -- distance tolerance to the goal position (0 = action only)
+        chunks = 1,              -- split long segments into N chunks optimised in sequence (1 = off)
+    },
     variables = {
         {
             identifier = 'yaw_facing',
