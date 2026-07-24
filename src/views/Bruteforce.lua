@@ -51,6 +51,13 @@ end)
 -- target action is never reached, e.g. because the movie is not replaying the action).
 local CAPTURE_SAFETY_CAP = 1200
 
+-- Chain-safety acceptance tolerances (AUTOMATIC — no user knob; the magic button handles chaining
+-- itself). An applied optimization must leave Mario in ~the same state (speed + facing angle), not
+-- just the same spot, or the next sheet desyncs. Tight enough to mean "same state", loose enough to
+-- absorb the tiny variation between two input paths that reach the same action+position.
+local CHAIN_SPEED_TOL = 1.0  -- horizontal-speed units
+local CHAIN_ANGLE_TOL = 256  -- u16 angle units (~1.4 degrees)
+
 ---@return integer speed_mode
 local function playback_speed_mode()
     return Settings.bruteforce.fast_forward and Mupen.CoreSpeedMode.UltraFastForward or Mupen.CoreSpeedMode.Normal
@@ -101,6 +108,22 @@ BruteforceDriver = {
     candidate_min_dist2 = math.huge, -- closest squared distance to the goal during the current run
     ---@type any The savestate the current search loads from (start_state, or a chunk's start).
     search_state = nil,
+    -- Mid-run checkpoint LADDER: savestates of the CURRENT best run taken at 1/2 and 3/4 of its
+    -- length. Candidates the core tags `preserve_prefix` (identical to the best up to that frame)
+    -- are replayed from the matching rung instead of the segment start — half the emulator work at
+    -- the 1/2 rung, a quarter at the 3/4 rung. Rebuilt lazily after every improvement (ck_pending),
+    -- invalidated the moment the best changes.
+    ---@type { frame: integer, state: any, min_dist2: number }[]|nil
+    checkpoints = nil,
+    ck_pending = false,
+    -- checkpoint-build bookkeeping (targets built in sequence, each segment chained from the
+    -- previous rung's savestate so the replay never straddles an async save)
+    ck_targets = nil,
+    ck_index = 1,
+    ck_new = nil,
+    ck_base_frame = 0,
+    ck_base_state = nil,
+    ck_min_dist2 = math.huge,
     ---@type table[]|nil The optimised chunk being replayed during the chain phase.
     chain_inputs = nil,
     chain_idx = 0,
@@ -141,6 +164,10 @@ function BruteforceDriver.set_goal_from_current()
     BruteforceDriver.target_x = Memory.current.mario_x
     BruteforceDriver.target_y = Memory.current.mario_y
     BruteforceDriver.target_z = Memory.current.mario_z
+    -- Also capture speed + facing angle: matching these makes an optimization CHAIN-SAFE (it must
+    -- leave Mario in the same state, not just the same spot, or downstream sheets desync).
+    BruteforceDriver.target_h_speed = Memory.current.mario_h_speed
+    BruteforceDriver.target_yaw = Memory.current.mario_facing_yaw
     BruteforceDriver.error = nil
 end
 
@@ -167,6 +194,10 @@ function BruteforceDriver.start()
     BruteforceDriver.chunks = nil
     BruteforceDriver.chunk_index = nil
     BruteforceDriver.chunk_result = nil
+    BruteforceDriver.checkpoints = nil
+    BruteforceDriver.ck_targets = nil
+    BruteforceDriver.ck_pending = false
+    BruteforceDriver.aims = nil
     BruteforceDriver.frame_idx = 0
     BruteforceDriver.phase = 'capture'
     BruteforceDriver.status = 'BRUTEFORCE_STATUS_CAPTURING'
@@ -190,11 +221,13 @@ function BruteforceDriver.start_for_sheet(sheet)
         BruteforceDriver.error = 'BRUTEFORCE_ERROR_SHEET_NOT_READY'
         return
     end
-    -- goal = the sheet's end, where Mario is right now
+    -- goal = the sheet's end, where Mario is right now (state matched for chain safety, see below)
     BruteforceDriver.target_action = Memory.current.mario_action
     BruteforceDriver.target_x = Memory.current.mario_x
     BruteforceDriver.target_y = Memory.current.mario_y
     BruteforceDriver.target_z = Memory.current.mario_z
+    BruteforceDriver.target_h_speed = Memory.current.mario_h_speed
+    BruteforceDriver.target_yaw = Memory.current.mario_facing_yaw
     BruteforceDriver.start_state = sheet._savestate
     BruteforceDriver.start_frame = nil          -- sheet results are applied to the sheet, not spliced into a movie
     BruteforceDriver.driving_sheet = sheet
@@ -234,6 +267,9 @@ function BruteforceDriver.stop()
     BruteforceDriver.phase = 'idle'
     BruteforceDriver.candidate = nil
     BruteforceDriver.capture_list = nil
+    BruteforceDriver.checkpoints = nil
+    BruteforceDriver.ck_targets = nil
+    BruteforceDriver.ck_pending = false
     emu_halt()
     if BruteforceDriver.status == 'BRUTEFORCE_STATUS_CAPTURING'
         or BruteforceDriver.status == 'BRUTEFORCE_STATUS_SEARCHING' then
@@ -247,16 +283,59 @@ local start_chunk
 local finish_chunk
 local finalize_chunks
 local finalize_verified
+local finish_single_search
+
+-- Ends a single-mode search: halt, mark done, set the status.
+local function done_single(status)
+    BruteforceDriver.phase = 'done'
+    BruteforceDriver.active = false
+    BruteforceDriver.status = status
+    emu_halt()
+end
+
+-- Mid-run checkpoint ladder = a SPEED optimization: measure suffix-only candidates from a savestate
+-- taken partway through the best, instead of replaying from the start. DISABLED, because a savestate
+-- taken mid-run can be a frame out of alignment, so a candidate that "reaches the goal" measured from
+-- the checkpoint may NOT reproduce when replayed honestly from the true start — which made the
+-- end-to-end verification (correctly) discard real gains and apply nothing. Plain replay from the
+-- start is deterministic, so with checkpoints off every measured best reproduces and applies. Flip
+-- to true only after the checkpoint frame alignment is proven correct in mupen.
+local USE_CHECKPOINTS = false
+
+-- Drops the mid-run checkpoint ladder (the best just changed, so its savestates no longer match)
+-- and asks for a fresh one to be built before the next candidate. Also called on a new core.
+local function reset_checkpoint(rebuild)
+    BruteforceDriver.checkpoints = nil
+    BruteforceDriver.ck_targets = nil
+    BruteforceDriver.ck_pending = USE_CHECKPOINTS and rebuild == true
+    if BruteforceDriver.core then
+        Bruteforce.set_checkpoints(BruteforceDriver.core, nil)
+    end
+end
 
 -- Loads the search's start state for the next candidate; on completion resumes the RUN phase.
 -- `search_state` is the original start in single mode, or the current chunk's start savestate in
 -- chunk mode — so each chunk's runs stay SHORT (only that chunk's frames), no matter how many
--- chunks precede it.
+-- chunks precede it. Candidates the core tagged `preserve_prefix` (identical to the best up to a
+-- checkpoint rung) load that rung's savestate instead and start there — same measurement, a
+-- fraction of the emulator frames.
 local function begin_candidate_run()
     BruteforceDriver.phase = 'load'
-    savestate.do_memory(BruteforceDriver.search_state, 'load', function()
-        BruteforceDriver.frame_idx = 0
-        BruteforceDriver.candidate_min_dist2 = math.huge -- reset the closest-approach tracker
+    local cand = BruteforceDriver.candidate
+    local ck = nil
+    if cand.preserve_prefix ~= nil and BruteforceDriver.checkpoints ~= nil then
+        for _, entry in ipairs(BruteforceDriver.checkpoints) do
+            if entry.frame == cand.preserve_prefix then
+                ck = entry
+                break
+            end
+        end
+    end
+    local load_state = ck ~= nil and ck.state or BruteforceDriver.search_state
+    savestate.do_memory(load_state, 'load', function()
+        BruteforceDriver.frame_idx = ck ~= nil and ck.frame or 0
+        -- the closest-approach tracker starts from the prefix's own closest approach when resuming
+        BruteforceDriver.candidate_min_dist2 = ck ~= nil and ck.min_dist2 or math.huge
         BruteforceDriver.phase = 'run'
         -- Re-assert that the emulator is running: in the sheet-driven flow the semantic sheet paused it
         -- when it reached its preview during capture, so the search would otherwise sit frozen. Harmless
@@ -265,23 +344,79 @@ local function begin_candidate_run()
     end)
 end
 
+-- Starts (or continues) replaying toward the current checkpoint target, from the previous rung's
+-- savestate — chaining segments this way means a replay never has to continue across an async save.
+local function begin_ck_segment()
+    BruteforceDriver.phase = 'ckload'
+    savestate.do_memory(BruteforceDriver.ck_base_state, 'load', function()
+        BruteforceDriver.frame_idx = BruteforceDriver.ck_base_frame
+        BruteforceDriver.phase = 'ckrun'
+        emu_run()
+    end)
+end
+
+-- Builds the mid-run checkpoint LADDER: replays the current best and snapshots its state at 1/2 and
+-- (when long enough) 3/4 of its length, each segment chained from the previous rung. Costs about
+-- one 3/4-replay per improvement; pays for itself many times over via the shortened suffix runs.
+local function build_checkpoints()
+    local b = BruteforceDriver.core.best_frames
+    local targets = { math.floor(b / 2) }
+    local three_q = math.floor(b * 3 / 4)
+    if three_q - targets[1] >= 4 then
+        targets[#targets + 1] = three_q
+    end
+    BruteforceDriver.ck_targets = targets
+    BruteforceDriver.ck_index = 1
+    BruteforceDriver.ck_new = {}
+    BruteforceDriver.ck_base_frame = 0
+    BruteforceDriver.ck_base_state = BruteforceDriver.search_state
+    BruteforceDriver.ck_min_dist2 = math.huge
+    begin_ck_segment()
+end
+
 -- Requests the next candidate from the core; when the budget is exhausted, finishes the current
--- chunk (chunk mode) or the whole search.
+-- chunk (chunk mode) or the whole search. Rebuilds the mid-run checkpoint first when an
+-- improvement invalidated it (only once the best is long enough for halving to pay off).
 advance_to_next_candidate = function()
+    if BruteforceDriver.ck_pending and BruteforceDriver.core
+        and #BruteforceDriver.core.beam > 0 and BruteforceDriver.core.best_frames >= 8 then
+        BruteforceDriver.ck_pending = false
+        build_checkpoints()
+        return
+    end
     local next_candidate = Bruteforce.next_candidate(BruteforceDriver.core)
     if next_candidate == nil then
         if BruteforceDriver.chunks then
             finish_chunk()
         else
-            BruteforceDriver.phase = 'done'
-            BruteforceDriver.active = false
-            BruteforceDriver.status = 'BRUTEFORCE_STATUS_DONE'
-            emu_halt()
+            finish_single_search()
         end
         return
     end
     BruteforceDriver.candidate = next_candidate
     begin_candidate_run()
+end
+
+-- Single-mode completion. A zero-gain search has nothing to apply -> straight to done. A positive
+-- gain is VERIFIED end-to-end first: replay best_list from the true start and confirm it still
+-- reaches the goal. If it does NOT reproduce (e.g. a candidate measured from a mid-run checkpoint
+-- that doesn't replay identically from frame 0), the result is DISCARDED rather than applied — a
+-- result that can't be reproduced would break the sheet it is written to. Mirrors chunk-mode verify.
+finish_single_search = function()
+    local core = BruteforceDriver.core
+    local status = Bruteforce.summary(core).converged
+        and 'BRUTEFORCE_STATUS_CONVERGED' or 'BRUTEFORCE_STATUS_DONE'
+    if Bruteforce.summary(core).gain <= 0 then
+        done_single(status)
+        return
+    end
+    BruteforceDriver._verify_status = status
+    BruteforceDriver.phase = 'verifysingleload'
+    savestate.do_memory(BruteforceDriver.search_state, 'load', function()
+        BruteforceDriver.verify_idx = 0
+        BruteforceDriver.phase = 'verifysingle'
+        emu_run()
+    end)
 end
 
 -- Sets up and starts the search for chunk `i`: it searches ONLY this chunk's inputs, from the
@@ -293,6 +428,20 @@ start_chunk = function(i)
     BruteforceDriver.target_x = cp.x
     BruteforceDriver.target_y = cp.y
     BruteforceDriver.target_z = cp.z
+    -- chunk checkpoints don't track speed/angle: position-only for internal boundaries. The final
+    -- end-to-end verify (finalize_chunks) restores the full state goal and catches any drift.
+    BruteforceDriver.target_h_speed = nil
+    BruteforceDriver.target_yaw = nil
+    -- Per-chunk goal-aiming directions: the same captured states, sliced to this chunk (0-indexed
+    -- for estimate_aims: slice[0] = the state right before the chunk's first input).
+    local aims = nil
+    if BruteforceDriver.capture_states ~= nil and chunk.from ~= nil then
+        local slice = {}
+        for j = 0, #chunk.inputs do
+            slice[j] = BruteforceDriver.capture_states[chunk.from - 1 + j]
+        end
+        aims = Bruteforce.estimate_aims(chunk.inputs, slice, { x = cp.x, z = cp.z })
+    end
     -- Perturbation strength is AUTO-MANAGED, reactively: the search stays precise while it is
     -- improving, and every `pulse_after` non-improving candidates the stagnation pulse raises the
     -- shake (cumulatively, so a long stall escalates to big route-changing moves) until an
@@ -304,8 +453,10 @@ start_chunk = function(i)
         max_frames = #chunk.inputs,
         anneal = false,
         pulse_after = 30,
+        aims = aims,
         budget = Settings.bruteforce.budget,
     })
+    reset_checkpoint(false) -- fresh core: no checkpoint yet (built after its first improvement)
     BruteforceDriver.status = 'BRUTEFORCE_STATUS_SEARCHING'
     advance_to_next_candidate()
 end
@@ -347,6 +498,8 @@ finalize_chunks = function()
     BruteforceDriver.target_x = BruteforceDriver.final_goal.x
     BruteforceDriver.target_y = BruteforceDriver.final_goal.y
     BruteforceDriver.target_z = BruteforceDriver.final_goal.z
+    BruteforceDriver.target_h_speed = BruteforceDriver.final_goal.h_speed
+    BruteforceDriver.target_yaw = BruteforceDriver.final_goal.yaw
     BruteforceDriver.status = 'BRUTEFORCE_STATUS_VERIFYING'
     BruteforceDriver.phase = 'verifyload'
     savestate.do_memory(BruteforceDriver.start_state, 'load', function()
@@ -398,6 +551,12 @@ local function finish_capture(reached)
     BruteforceDriver.baseline_len = #baseline
     BruteforceDriver.search_state = BruteforceDriver.start_state -- searches load from here
 
+    -- Goal-aiming directions, estimated from the capture (stick->world rotation per frame + goal
+    -- position). Feeds the core's directed "aim at the goal" mutation; nil (no usable signal or
+    -- legacy action-only goal) simply disables that operator.
+    BruteforceDriver.aims = Bruteforce.estimate_aims(baseline, states,
+        { x = BruteforceDriver.target_x, z = BruteforceDriver.target_z })
+
     local n = Settings.bruteforce.chunks or 1
     if n > 1 and #baseline > n then
         -- long segment: optimise it chunk by chunk, each chained from a fresh (short) savestate.
@@ -408,6 +567,8 @@ local function finish_capture(reached)
             x = BruteforceDriver.target_x,
             y = BruteforceDriver.target_y,
             z = BruteforceDriver.target_z,
+            h_speed = BruteforceDriver.target_h_speed,
+            yaw = BruteforceDriver.target_yaw,
         }
         BruteforceDriver.chunks = Bruteforce.split(baseline, states, n)
         BruteforceDriver.chunk_index = 1
@@ -423,8 +584,10 @@ local function finish_capture(reached)
             max_frames = #baseline, -- only accept candidates that reach the goal in <= baseline frames
             anneal = false,
             pulse_after = 30,
+            aims = BruteforceDriver.aims,
             budget = Settings.bruteforce.budget,
         })
+        reset_checkpoint(false) -- fresh core: no checkpoint yet (built after its first improvement)
         BruteforceDriver.status = 'BRUTEFORCE_STATUS_SEARCHING'
         advance_to_next_candidate()
     end
@@ -442,7 +605,7 @@ function BruteforceDriver.process(input)
     -- Goal = same Mario action AND within goal_radius of the captured position (position makes the
     -- goal unambiguous). We also track the closest approach (squared, for speed) during a run so
     -- near-misses can feed the soft-fitness explore pool. target_x is nil only for legacy goals.
-    local goal_reached = Memory.current.mario_action == BruteforceDriver.target_action
+    -- Track the closest position approach (soft fitness for the explore pool / near-misses).
     if BruteforceDriver.target_x ~= nil then
         local dx = Memory.current.mario_x - BruteforceDriver.target_x
         local dy = Memory.current.mario_y - BruteforceDriver.target_y
@@ -450,12 +613,29 @@ function BruteforceDriver.process(input)
         local dist2 = dx * dx + dy * dy + dz * dz
         if BruteforceDriver.phase == 'run' and dist2 < BruteforceDriver.candidate_min_dist2 then
             BruteforceDriver.candidate_min_dist2 = dist2
-        end
-        local r = Settings.bruteforce.goal_radius
-        if goal_reached and dist2 > (r * r) then
-            goal_reached = false
+        elseif BruteforceDriver.phase == 'ckrun' and dist2 < BruteforceDriver.ck_min_dist2 then
+            -- prefix closest-approach, inherited by every candidate replayed from the checkpoint
+            BruteforceDriver.ck_min_dist2 = dist2
         end
     end
+
+    -- Goal acceptance: same action + position AND (for chain safety) speed + facing angle within
+    -- tolerances — so an applied optimization leaves Mario in the same state and never desyncs the
+    -- next sheet. Speed/angle checks only apply when a target was captured (nil = legacy goal).
+    local goal_reached = Bruteforce.state_matches_goal(
+        {
+            action = Memory.current.mario_action,
+            x = Memory.current.mario_x, y = Memory.current.mario_y, z = Memory.current.mario_z,
+            h_speed = Memory.current.mario_h_speed, yaw = Memory.current.mario_facing_yaw,
+        },
+        {
+            action = BruteforceDriver.target_action,
+            x = BruteforceDriver.target_x, y = BruteforceDriver.target_y, z = BruteforceDriver.target_z,
+            h_speed = BruteforceDriver.target_h_speed, yaw = BruteforceDriver.target_yaw,
+        },
+        Settings.bruteforce.goal_radius,
+        BruteforceDriver.target_h_speed ~= nil and CHAIN_SPEED_TOL or nil,
+        BruteforceDriver.target_yaw ~= nil and CHAIN_ANGLE_TOL or nil)
 
     if BruteforceDriver.phase == 'capture' then
         -- Record Mario's state after frame_idx inputs (index by frames-applied) so chunk boundaries
@@ -479,6 +659,8 @@ function BruteforceDriver.process(input)
                 BruteforceDriver.target_x = Memory.current.mario_x
                 BruteforceDriver.target_y = Memory.current.mario_y
                 BruteforceDriver.target_z = Memory.current.mario_z
+                BruteforceDriver.target_h_speed = Memory.current.mario_h_speed
+                BruteforceDriver.target_yaw = Memory.current.mario_facing_yaw
                 finish_capture(true)
             elseif BruteforceDriver.frame_idx >= CAPTURE_SAFETY_CAP then
                 finish_capture(false)
@@ -508,10 +690,16 @@ function BruteforceDriver.process(input)
             hspeed = Memory.current.mario_h_speed,
         }
         if goal_reached and BruteforceDriver.frame_idx > 0 then
-            Bruteforce.report_result(BruteforceDriver.core, BruteforceDriver.candidate, BruteforceDriver.frame_idx, true, nil, end_state)
+            local improved = Bruteforce.report_result(BruteforceDriver.core, BruteforceDriver.candidate, BruteforceDriver.frame_idx, true, nil, end_state)
+            if improved then
+                -- the best changed: the old checkpoint no longer matches it — rebuild lazily
+                reset_checkpoint(true)
+            end
             advance_to_next_candidate()
             return Bruteforce.clone_input(nil)
-        elseif BruteforceDriver.frame_idx >= BruteforceDriver.core.max_frames then
+        elseif BruteforceDriver.frame_idx >= Bruteforce.cutoff(BruteforceDriver.core) then
+            -- early-abort pruning: past best_frames + slack this candidate cannot improve anymore,
+            -- so stop emulating it — the search gets faster as the best gets shorter
             local min_dist = BruteforceDriver.candidate_min_dist2 < math.huge
                 and math.sqrt(BruteforceDriver.candidate_min_dist2) or nil
             Bruteforce.report_result(BruteforceDriver.core, BruteforceDriver.candidate, BruteforceDriver.frame_idx, false, min_dist, end_state)
@@ -522,6 +710,36 @@ function BruteforceDriver.process(input)
             BruteforceDriver.frame_idx = BruteforceDriver.frame_idx + 1
             return out
         end
+    elseif BruteforceDriver.phase == 'ckrun' then
+        -- Replay the current best up to the current ladder target, then snapshot that state as a
+        -- checkpoint rung (see build_checkpoints). Rungs are built in sequence, each replayed from
+        -- the previous rung's savestate.
+        local target = BruteforceDriver.ck_targets[BruteforceDriver.ck_index]
+        if BruteforceDriver.frame_idx < target then
+            local out = BruteforceDriver.core.best_list[BruteforceDriver.frame_idx + 1]
+            BruteforceDriver.frame_idx = BruteforceDriver.frame_idx + 1
+            return out or Bruteforce.clone_input(nil)
+        end
+        BruteforceDriver.phase = 'cksave'
+        savestate.do_memory('', 'save', function(_, data)
+            if not BruteforceDriver.active then return end -- Stop pressed mid-save: do not restart anything
+            local d = BruteforceDriver
+            d.ck_new[#d.ck_new + 1] = { frame = target, state = data, min_dist2 = d.ck_min_dist2 }
+            d.ck_index = d.ck_index + 1
+            if d.ck_index <= #d.ck_targets then
+                -- next rung: chain the replay from the rung just saved
+                d.ck_base_frame = target
+                d.ck_base_state = data
+                begin_ck_segment()
+            else
+                d.checkpoints = d.ck_new
+                local frames = {}
+                for i, entry in ipairs(d.ck_new) do frames[i] = entry.frame end
+                Bruteforce.set_checkpoints(d.core, frames)
+                advance_to_next_candidate()
+            end
+        end)
+        return Bruteforce.clone_input(nil)
     elseif BruteforceDriver.phase == 'chain' then
         -- Replay the just-optimised chunk from its start, then snapshot the end as the next chunk's
         -- start savestate — so the next chunk's search only runs its own (short) frames.
@@ -549,10 +767,30 @@ function BruteforceDriver.process(input)
         local out = BruteforceDriver.chunk_result[BruteforceDriver.verify_idx + 1]
         BruteforceDriver.verify_idx = BruteforceDriver.verify_idx + 1
         return out
+    elseif BruteforceDriver.phase == 'verifysingle' then
+        -- HONESTLY re-measure the best by replaying it from the true start (candidates measured from
+        -- a mid-run checkpoint can land a frame or two off). If it reaches the goal at ANY frame up
+        -- to the timeout, keep it at that TRUE frame count (gain recomputed from it — still applied
+        -- if it's really shorter). Only discard when it never reaches within the timeout — that is a
+        -- genuinely unreproducible result that would break a sheet. See finish_single_search.
+        local core = BruteforceDriver.core
+        if core ~= nil and goal_reached and BruteforceDriver.verify_idx > 0 then
+            core.best_frames = BruteforceDriver.verify_idx -- the honest end-to-end count
+            done_single(BruteforceDriver._verify_status)
+            return Bruteforce.clone_input(nil)
+        elseif core == nil or BruteforceDriver.verify_idx >= core.max_frames then
+            BruteforceDriver.core = nil
+            BruteforceDriver.error = 'BRUTEFORCE_ERROR_VERIFY_FAILED'
+            done_single('BRUTEFORCE_STATUS_STOPPED')
+            return Bruteforce.clone_input(nil)
+        end
+        local out = core.best_list[BruteforceDriver.verify_idx + 1] or Bruteforce.clone_input(nil)
+        BruteforceDriver.verify_idx = BruteforceDriver.verify_idx + 1
+        return out
     end
 
-    -- 'load' / 'chainload' / 'chainsave' / 'done': feed a neutral input so no ambient movie/manual
-    -- input can contaminate a measurement during an async transition.
+    -- 'load' / 'ckload' / 'cksave' / 'chainload' / 'chainsave' / 'done': feed a neutral input so no
+    -- ambient movie/manual input can contaminate a measurement during an async transition.
     return Bruteforce.clone_input(nil)
 end
 
@@ -705,6 +943,7 @@ return {
             or Locales.str('BRUTEFORCE_GOAL_UNSET'))
 
         -- Row 2: goal radius (position tolerance). 0 = ignore position (action only). Live-editable.
+        -- (Speed + facing-angle chain-safety is AUTOMATIC — no knob; see CHAIN_SPEED_TOL/CHAIN_ANGLE_TOL.)
         Settings.bruteforce.goal_radius = config_spinner(UID.GoalRadiusLabel, UID.GoalRadius, 2,
             'BRUTEFORCE_GOAL_RADIUS', Settings.bruteforce.goal_radius, 0, 100000, true)
 
@@ -739,9 +978,12 @@ return {
                 Locales.str('BRUTEFORCE_GAIN'), s.gain))
             -- speed@goal: how fast the best solution ARRIVES at the goal. Among equal-frame
             -- solutions the search keeps the fastest arrival, which chains best into what follows.
-            local tried_line = string.format('%s %d / %d   |   %s %d',
+            -- shake = the auto-escalation level: 0 while improving (precise polish), climbing while
+            -- stuck (wider, route-changing search). Watching it move shows the auto-strength working.
+            local tried_line = string.format('%s %d / %d   |   %s %d   |   %s %d',
                 Locales.str('BRUTEFORCE_TRIED'), s.tried, s.budget,
-                Locales.str('BRUTEFORCE_NICHES'), s.niches or 0)
+                Locales.str('BRUTEFORCE_NICHES'), s.niches or 0,
+                Locales.str('BRUTEFORCE_SHAKE'), s.shake or 0)
             if s.best_hspeed ~= nil then
                 tried_line = tried_line .. string.format('   |   %s %.1f',
                     Locales.str('BRUTEFORCE_SPEED'), s.best_hspeed)

@@ -814,5 +814,601 @@ do
     check('curiosity: replacement inherits the expansion count', st.archive[keyB].expansions == 1)
 end
 
+-- early-abort cutoff: candidates that cannot beat the best anymore are cut at best + slack
+do
+    local st = Bruteforce.new({ baseline = make_baseline(30), baseline_frames = 30, max_frames = 30,
+        prune_slack = 2, rng = make_rng(1) })
+    check('cutoff: full max_frames while nothing reached', Bruteforce.cutoff(st) == 30)
+    Bruteforce.report_result(st, make_baseline(30), 30, true) -- re-base + seed beam
+    check('cutoff: best at baseline -> still capped by max_frames', Bruteforce.cutoff(st) == 30)
+    Bruteforce.report_result(st, make_baseline(20), 20, true) -- big improvement
+    check('cutoff: best + slack once improved', Bruteforce.cutoff(st) == 22)
+end
+
+-- candidate dedupe: identical input lists are never handed out twice
+do
+    local a = { { X = 5, Y = -3, A = true } }
+    local b = { { X = 5, Y = -3, A = true } }
+    local c = { { X = 5, Y = -3, A = false } }
+    check('hash: equal candidates hash equal', Bruteforce._hash_candidate(a) == Bruteforce._hash_candidate(b))
+    check('hash: different button -> different hash', Bruteforce._hash_candidate(a) ~= Bruteforce._hash_candidate(c))
+
+    -- with all mutation chances at 0 the generator would return the baseline forever; dedupe
+    -- must detect the repeat (the reroll returns an identical list, but it is marked as seen)
+    local st = Bruteforce.new({ baseline = make_baseline(4), baseline_frames = 4, max_frames = 4,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        window_chance = 0, anneal = false, sweep = false, budget = 10, rng = make_rng(2) })
+    Bruteforce.next_candidate(st) -- baseline (marked seen)
+    check('dedupe: baseline marked as seen', st.seen_count == 1)
+    Bruteforce.next_candidate(st)
+    check('dedupe: seen set does not grow on duplicates', st.seen_count == 1)
+end
+
+-- deterministic edge sweep: every A/B/Z edge of the best gets its +-1-frame shift tried, end-first
+do
+    -- best: distinct sticks, A pressed on frames 3-4 -> edges at e=3 (press) and e=5 (release)
+    local base = {}
+    for i = 1, 6 do base[i] = { X = i * 10, Y = 0, A = (i == 3 or i == 4) } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        window_chance = 0, anneal = false, pulse_after = 0, budget = 50, rng = make_rng(3) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true) -- seed beam
+    -- no redundant frames -> the sweep goes straight to edge candidates, end-first:
+    -- 1) release edge (e=5) moved earlier: A held only on frame 3
+    local c1 = Bruteforce.next_candidate(st)
+    check('edge sweep: first = release edge 1 frame earlier',
+        c1[3].A == true and c1[4].A == false and c1[5].A == false)
+    Bruteforce.report_result(st, c1, 6, false, 100)
+    -- 2) release edge (e=5) moved later: A held on frames 3-5
+    local c2 = Bruteforce.next_candidate(st)
+    check('edge sweep: second = release edge 1 frame later',
+        c2[3].A == true and c2[4].A == true and c2[5].A == true)
+    Bruteforce.report_result(st, c2, 6, false, 100)
+    -- 3) press edge (e=3) moved earlier: A held on frames 2-4
+    local c3 = Bruteforce.next_candidate(st)
+    check('edge sweep: third = press edge 1 frame earlier',
+        c3[2].A == true and c3[3].A == true and c3[4].A == true)
+    Bruteforce.report_result(st, c3, 6, false, 100)
+    -- 4) press edge (e=3) moved later: A held only on frame 4
+    local c4 = Bruteforce.next_candidate(st)
+    check('edge sweep: fourth = press edge 1 frame later',
+        c4[2].A == false and c4[3].A == false and c4[4].A == true)
+    Bruteforce.report_result(st, c4, 6, false, 100)
+    -- sticks are never touched by an edge shift
+    local sticks_kept = true
+    for i = 1, 6 do if c1[i].X ~= i * 10 then sticks_kept = false end end
+    check('edge sweep: sticks untouched', sticks_kept)
+end
+
+-- mid-run checkpoint: suffix-only candidates preserve the best's prefix and carry the tag
+do
+    local base = {}
+    for i = 1, 12 do base[i] = { X = i * 10, Y = 5, A = false } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 12, max_frames = 12,
+        perturb_chance = 1.0, flip_chance = 0.5, remove_chance = 0.5, edge_nudge_chance = 0.5,
+        insert_chance = 0.5, rotate_chance = 0.5, snap_chance = 0.5, crossover_chance = 0,
+        suffix_prob = 1.0, sweep = false, anneal = false, budget = 200, rng = make_rng(7) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 12, true) -- seed beam
+    Bruteforce.set_checkpoint(st, 6)
+    local prefix_ok, tagged = true, true
+    for _ = 1, 30 do
+        local c = Bruteforce.next_candidate(st)
+        if c.preserve_prefix ~= 6 then tagged = false end
+        for i = 1, 6 do
+            if c[i].X ~= i * 10 or c[i].Y ~= 5 or c[i].A ~= false then prefix_ok = false end
+        end
+        Bruteforce.report_result(st, c, 12, false, 50)
+    end
+    check('checkpoint: suffix candidates tagged preserve_prefix', tagged)
+    check('checkpoint: frames 1..checkpoint bit-identical to the best', prefix_ok)
+
+    -- clearing the checkpoint stops the tagging
+    Bruteforce.set_checkpoint(st, nil)
+    local c = Bruteforce.next_candidate(st)
+    check('checkpoint: cleared -> no tag', c.preserve_prefix == nil)
+end
+
+-- checkpoint + sweep: deterministic candidates whose change lies past the checkpoint are tagged too
+do
+    local base = {
+        { X = 10, Y = 0 }, { X = 20, Y = 0 }, { X = 30, Y = 0 }, { X = 40, Y = 0 },
+        { X = 0, Y = 0 }, -- neutral frame at index 5 (past a checkpoint at 3)
+        { X = 60, Y = 0 },
+    }
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        window_chance = 0, anneal = false, budget = 50, rng = make_rng(4) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true)
+    Bruteforce.set_checkpoint(st, 3)
+    local c = Bruteforce.next_candidate(st) -- sweep: removes the neutral frame 5
+    check('checkpoint sweep: removal past the checkpoint is tagged', c.preserve_prefix == 3)
+    check('checkpoint sweep: it is the expected removal', c[4].X == 40 and c[5].X == 60)
+end
+
+-- stagnation escalation: parameters widen level by level while stuck, snap back on improvement
+do
+    local st = Bruteforce.new({ baseline = make_baseline(30), baseline_frames = 30, max_frames = 30,
+        pulse_after = 30, prune_slack = 2, flip_chance = 0.05, remove_chance = 0.15,
+        suffix_prob = 0.5, explore_prob = 0.3, anneal = false, rng = make_rng(1) })
+    Bruteforce.report_result(st, make_baseline(30), 30, true) -- re-base + seed beam
+    Bruteforce.report_result(st, make_baseline(20), 20, true) -- an improvement -> level 0
+
+    check('escalation: level 0 while progressing', Bruteforce._stagnation_level(st) == 0)
+    local e0 = Bruteforce.escalation(st)
+    check('escalation: level 0 = base params',
+        e0.flip_chance == 0.05 and e0.remove_chance == 0.15 and e0.suffix_prob == 0.5 and e0.slack_bonus == 0)
+    check('escalation: cutoff = best + slack at level 0', Bruteforce.cutoff(st) == 22)
+
+    for _ = 1, 60 do Bruteforce.report_result(st, make_baseline(25), 25, true) end -- 60 stalls
+    check('escalation: level 2 after two periods', Bruteforce._stagnation_level(st) == 2)
+    local e2 = Bruteforce.escalation(st)
+    check('escalation: flips tripled at level 2', math.abs(e2.flip_chance - 0.15) < 1e-9)
+    check('escalation: removals doubled at level 2', math.abs(e2.remove_chance - 0.30) < 1e-9)
+    check('escalation: suffix polish fades', math.abs(e2.suffix_prob - 0.5 / 3) < 1e-9)
+    check('escalation: explore grows', e2.explore_prob > 0.3)
+    check('escalation: prune window widens', Bruteforce.cutoff(st) == 26)
+    check('escalation: cutoff still capped by max_frames', Bruteforce.cutoff(st) <= 30)
+
+    Bruteforce.report_result(st, make_baseline(19), 19, true) -- improvement -> everything snaps back
+    check('escalation: improvement resets the level', Bruteforce._stagnation_level(st) == 0)
+    check('escalation: cutoff back to best + slack', Bruteforce.cutoff(st) == 21)
+
+    -- an explicitly-high base chance is never clamped below itself
+    local hi = Bruteforce.new({ baseline = make_baseline(4), baseline_frames = 4,
+        remove_chance = 1.0, rng = make_rng(2) })
+    check('escalation: explicit chance 1.0 preserved', Bruteforce.escalation(hi).remove_chance == 1.0)
+end
+
+-- deterministic press-shift sweep: a whole press moves +-1 frame with its duration kept
+do
+    -- best: A pressed on frames 3-4 only; sticks distinct
+    local base = {}
+    for i = 1, 6 do base[i] = { X = i * 10, Y = 0, A = (i == 3 or i == 4) } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        window_chance = 0, anneal = false, pulse_after = 0, budget = 50, rng = make_rng(3) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true) -- seed beam
+    -- consume the 4 single-edge candidates first (tested elsewhere)
+    for _ = 1, 4 do
+        Bruteforce.report_result(st, Bruteforce.next_candidate(st), 6, false, 100)
+    end
+    -- 5th: whole press shifted 1 frame EARLIER -> A on frames 2-3, duration still 2
+    local c5 = Bruteforce.next_candidate(st)
+    check('shift sweep: press moved 1 frame earlier, duration kept',
+        c5[2].A == true and c5[3].A == true and c5[4].A == false and c5[5].A == false)
+    Bruteforce.report_result(st, c5, 6, false, 100)
+    -- 6th: whole press shifted 1 frame LATER -> A on frames 4-5, duration still 2
+    local c6 = Bruteforce.next_candidate(st)
+    check('shift sweep: press moved 1 frame later, duration kept',
+        c6[2].A == false and c6[3].A == false and c6[4].A == true and c6[5].A == true)
+    Bruteforce.report_result(st, c6, 6, false, 100)
+    -- a press starting at frame 1 cannot move earlier; one ending at the last frame cannot move later
+    local edge_base = {}
+    for i = 1, 4 do edge_base[i] = { X = 10, Y = 0, A = true, B = false } end -- A held 1..4
+    local st2 = Bruteforce.new({ baseline = edge_base, baseline_frames = 4, max_frames = 4,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        window_chance = 0, anneal = false, pulse_after = 0, budget = 20, rng = make_rng(4) })
+    Bruteforce.next_candidate(st2)
+    Bruteforce.report_result(st2, Bruteforce.clone_list(edge_base), 4, true)
+    -- walk the whole sweep: no candidate may ever press A outside the list or crash
+    local n = 0
+    while true do
+        local c = Bruteforce._next_sweep_candidate(st2)
+        if c == nil then break end
+        n = n + 1
+        Bruteforce.report_result(st2, c, 4, false, 100)
+        if n > 50 then break end
+    end
+    check('shift sweep: full-length press produces a bounded, crash-free sweep', n <= 50)
+end
+
+-- estimate_aims: recovers the stick->world rotation from the capture and points at the goal
+do
+    -- world moves +z when the stick points +x => rotation theta = +pi/2 on every frame
+    local inputs, states = {}, {}
+    states[0] = { x = 0, z = 0 }
+    for i = 1, 6 do
+        inputs[i] = { X = 127, Y = 0 }
+        states[i] = { x = 0, z = i * 10 }
+    end
+    -- goal straight +x of Mario: aim angle = atan(0,+dx) - pi/2 = -pi/2 -> stick (0, -1)
+    local aims = Bruteforce.estimate_aims(inputs, states, { x = 500, z = 0 })
+    check('aims: returns an estimate per frame', aims ~= nil and #aims == 6)
+    check('aims: direction compensates the stick->world rotation',
+        aims ~= nil and math.abs(aims[1].x) < 0.2 and aims[1].y < -0.8)
+
+    -- deadzone / motionless frames inherit the nearest valid estimate
+    local inputs2, states2 = {}, {}
+    states2[0] = { x = 0, z = 0 }
+    for i = 1, 5 do
+        if i == 3 then
+            inputs2[i] = { X = 0, Y = 0 } -- deadzone: no theta measurable
+            states2[i] = { x = states2[i - 1].x, z = states2[i - 1].z }
+        else
+            inputs2[i] = { X = 127, Y = 0 }
+            states2[i] = { x = states2[i - 1].x, z = states2[i - 1].z + 10 }
+        end
+    end
+    local aims2 = Bruteforce.estimate_aims(inputs2, states2, { x = 500, z = 0 })
+    check('aims: gap frames inherit a neighbour estimate', aims2 ~= nil and aims2[3] ~= nil)
+
+    check('aims: nil goal disables the estimator',
+        Bruteforce.estimate_aims(inputs, states, nil) == nil)
+    check('aims: all-deadzone baseline yields nil',
+        Bruteforce.estimate_aims({ { X = 0, Y = 0 } }, { [0] = { x = 0, z = 0 }, { x = 0, z = 0 } },
+            { x = 10, z = 10 }) == nil)
+end
+
+-- aim operator: perturbed frames snap to full deflection toward the goal
+do
+    local base = {}
+    for i = 1, 5 do base[i] = { X = 20, Y = 90 } end
+    local aims = {}
+    for i = 1, 5 do aims[i] = { x = 0.6, y = -0.8 } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 5, max_frames = 5,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false,
+        aims = aims, aim_chance = 1.0, rng = make_rng(31) })
+    Bruteforce.next_candidate(st) -- baseline
+    local c = Bruteforce.next_candidate(st)
+    local aimed = true
+    for i = 1, 5 do
+        if c[i].X ~= 76 or c[i].Y ~= -102 then aimed = false end -- 127*(0.6,-0.8) rounded
+    end
+    check('aim op: sticks snapped to the goal direction at full deflection', aimed)
+
+    -- without aims the operator is inert (previous rounds' behaviour preserved)
+    local st2 = Bruteforce.new({ baseline = base, baseline_frames = 5, max_frames = 5,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, aim_chance = 1.0, rng = make_rng(31) })
+    Bruteforce.next_candidate(st2)
+    local c2 = Bruteforce.next_candidate(st2)
+    check('aim op: inert without aims', c2[1].X == 20 and c2[1].Y == 90)
+end
+
+-- hold operator: smooths a short window into one held stick
+do
+    local out = {}
+    for i = 1, 10 do out[i] = { X = i * 10, Y = -i, A = (i == 4) } end
+    local st = Bruteforce.new({ baseline = { { X = 0 } }, baseline_frames = 1,
+        hold_chance = 1.0, edit_from = 1, rng = make_rng(6) })
+    check('hold: reports smoothing', Bruteforce._apply_hold(st, out) == true)
+    local run_len = 0
+    for i = 2, 10 do
+        if out[i].X == out[i - 1].X and out[i].Y == out[i - 1].Y then run_len = run_len + 1 end
+    end
+    check('hold: produced a held-stick run', run_len >= 1)
+    check('hold: buttons untouched', out[4].A == true)
+    local st0 = Bruteforce.new({ baseline = { { X = 0 } }, baseline_frames = 1,
+        hold_chance = 0.0, rng = make_rng(6) })
+    check('hold: chance 0 -> disabled', Bruteforce._apply_hold(st0, out) == false)
+end
+
+-- sweep k=2: after the +-1 entries, whole 2-frame retimings are tried deterministically
+do
+    -- A pressed on frames 3-4; queue = 4 edge k1, 2 shift k1, (no removals/remove2), then k=2
+    local base = {}
+    for i = 1, 6 do base[i] = { X = i * 10, Y = 0, A = (i == 3 or i == 4) } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, pulse_after = 0,
+        budget = 60, rng = make_rng(8) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true)
+    for _ = 1, 6 do -- consume the k=1 entries (tested in earlier blocks)
+        Bruteforce.report_result(st, Bruteforce.next_candidate(st), 6, false, 100)
+    end
+    -- first k=2 entry: release edge (e=5) extended 2 frames back -> A erased entirely
+    local c7 = Bruteforce.next_candidate(st)
+    local any_a = false
+    for i = 1, 6 do if c7[i].A then any_a = true end end
+    check('sweep k=2: first entry erases the press (release edge pulled 2 back)', any_a == false)
+end
+
+-- remove2 sweep: an adjacent pair around a redundant frame is dropped in one candidate
+do
+    local base = {
+        { X = 10, Y = 0 }, { X = 20, Y = 0 }, { X = 30, Y = 0 },
+        { X = 0, Y = 0 }, -- redundant neutral frame (index 4)
+        { X = 50, Y = 0 }, { X = 60, Y = 0 },
+    }
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, pulse_after = 0,
+        budget = 60, rng = make_rng(9) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true)
+    Bruteforce.report_result(st, Bruteforce.next_candidate(st), 6, false, 100) -- single removal of 4
+    -- next: remove2 pair (3,4) -> 10,20,50,60 then pads
+    local c = Bruteforce.next_candidate(st)
+    check('remove2: drops the redundant frame with its neighbour',
+        c[1].X == 10 and c[2].X == 20 and c[3].X == 50 and c[4].X == 60)
+end
+
+-- escalation exposes the widened rotation + summary exposes the shake level
+do
+    local st = Bruteforce.new({ baseline = make_baseline(10), baseline_frames = 10,
+        pulse_after = 30, rotate_max_rad = 0.25, anneal = false, rng = make_rng(1) })
+    Bruteforce.report_result(st, make_baseline(10), 10, true)
+    check('summary: shake 0 while progressing', Bruteforce.summary(st).shake == 0)
+    for _ = 1, 30 do Bruteforce.report_result(st, make_baseline(12), 12, true) end
+    check('summary: shake 1 after one stagnation period', Bruteforce.summary(st).shake == 1)
+    check('escalation: rotation widens with the level',
+        Bruteforce.escalation(st).rotate_max_rad > 0.25)
+end
+
+-- checkpoint ladder: suffix candidates use one of the rungs, sweeps tag the deepest usable rung
+do
+    local base = {}
+    for i = 1, 16 do base[i] = { X = i * 5, Y = 3, A = false } end
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 16, max_frames = 16,
+        perturb_chance = 1.0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, suffix_prob = 1.0,
+        sweep = false, budget = 300, rng = make_rng(13) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 16, true) -- seed beam
+    Bruteforce.set_checkpoints(st, { 8, 12 })
+    check('ladder: deepest rung mirrored in checkpoint_frame', st.checkpoint_frame == 8)
+
+    local used_8, used_12, prefix_ok = false, false, true
+    for _ = 1, 40 do
+        local c = Bruteforce.next_candidate(st)
+        if c.preserve_prefix == 8 then used_8 = true end
+        if c.preserve_prefix == 12 then used_12 = true end
+        local rung = c.preserve_prefix or 0
+        for i = 1, rung do
+            if c[i].X ~= i * 5 or c[i].Y ~= 3 then prefix_ok = false end
+        end
+        Bruteforce.report_result(st, c, 16, false, 50)
+    end
+    check('ladder: both rungs get used', used_8 and used_12)
+    check('ladder: the tagged prefix is bit-identical to the best', prefix_ok)
+
+    -- clearing the ladder stops the tagging
+    Bruteforce.set_checkpoints(st, nil)
+    check('ladder: cleared -> no deepest rung', st.checkpoint_frame == nil)
+    check('ladder: cleared -> untagged candidates', Bruteforce.next_candidate(st).preserve_prefix == nil)
+end
+
+-- checkpoint ladder + sweep: the deterministic candidate picks the DEEPEST rung below its change
+do
+    local base = {
+        { X = 10, Y = 0 }, { X = 20, Y = 0 }, { X = 30, Y = 0 }, { X = 40, Y = 0 },
+        { X = 50, Y = 0 }, { X = 60, Y = 0 }, { X = 70, Y = 0 },
+        { X = 0, Y = 0 }, -- redundant neutral frame at index 8 (past both rungs)
+        { X = 90, Y = 0 }, { X = 100, Y = 0 },
+    }
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 10, max_frames = 10,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, pulse_after = 0,
+        budget = 50, rng = make_rng(14) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 10, true)
+    Bruteforce.set_checkpoints(st, { 5, 7 })
+    local c = Bruteforce.next_candidate(st) -- sweep: removes the neutral frame 8
+    check('ladder sweep: tagged with the deepest rung below the change', c.preserve_prefix == 7)
+end
+
+-- a faster-arriving same-frame solution now counts as an IMPROVEMENT (resets stagnation, re-anchors
+-- the deterministic sweeps on the new best)
+do
+    local base = {
+        { X = 10, Y = 0 }, { X = 20, Y = 0 }, { X = 30, Y = 0 },
+        { X = 0, Y = 0 }, -- neutral frame (sweep target)
+        { X = 50, Y = 0 }, { X = 60, Y = 0 },
+    }
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 6, max_frames = 6,
+        perturb_chance = 0, flip_chance = 0, remove_chance = 0, edge_nudge_chance = 0,
+        insert_chance = 0, rotate_chance = 0, snap_chance = 0, crossover_chance = 0,
+        hold_chance = 0, window_chance = 0, anneal = false, pulse_after = 30,
+        budget = 100, rng = make_rng(17) })
+    Bruteforce.next_candidate(st) -- baseline
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, true, nil,
+        { action = 1, x = 0, z = 0, hspeed = 10 })
+    Bruteforce.report_result(st, Bruteforce.clone_list(base), 6, false, 100) -- some stagnation
+    check('speed-improvement: stagnation accumulated', st.stagnation == 1)
+
+    local tie = Bruteforce.clone_list(base)
+    for i = 1, 6 do tie[i].X = tie[i].X + 1 end -- distinguishable same-frame solution
+    tie[4].X = 0                                -- keep the neutral frame neutral
+    local improved = Bruteforce.report_result(st, tie, 6, true, nil,
+        { action = 1, x = 0, z = 0, hspeed = 50 })
+    check('speed-improvement: same frames + faster arrival counts as improvement', improved == true)
+    check('speed-improvement: stagnation reset', st.stagnation == 0)
+    check('speed-improvement: the faster solution is the best', st.best_list[1].X == 11)
+
+    -- the deterministic sweep re-anchors on the NEW best (drops its neutral frame)
+    local c = Bruteforce.next_candidate(st)
+    check('speed-improvement: sweep rebuilt from the new best',
+        c[1].X == 11 and c[2].X == 21 and c[4].X == 51)
+
+    -- a SLOWER same-frame solution is not an improvement
+    local slow = Bruteforce.clone_list(base)
+    for i = 1, 6 do slow[i].X = slow[i].X + 2 end
+    check('speed-improvement: slower same-frame arrival is not an improvement',
+        Bruteforce.report_result(st, slow, 6, true, nil, { action = 1, x = 0, z = 0, hspeed = 5 }) == false)
+end
+
+-- auto-stop: convergence, overtime on a hot streak, and the hard cap
+do
+    -- convergence: a long zero-improvement streak ends the search early
+    local st = Bruteforce.new({ baseline = make_baseline(10), baseline_frames = 10,
+        budget = 100000, convergence_after = 5, pulse_after = 30, anneal = false, rng = make_rng(18) })
+    Bruteforce.report_result(st, make_baseline(10), 10, true)
+    check('convergence: not done while fresh', Bruteforce.done(st) == false)
+    for _ = 1, 5 do Bruteforce.report_result(st, make_baseline(10), 10, false, 50) end
+    check('convergence: done after the streak', Bruteforce.done(st) == true)
+    check('convergence: no candidate handed out', Bruteforce.next_candidate(st) == nil)
+    check('convergence: summary flags it', Bruteforce.summary(st).converged == true)
+
+    -- overtime: the budget is spent but a recent improvement keeps the search alive
+    local st2 = Bruteforce.new({ baseline = make_baseline(10), baseline_frames = 10,
+        budget = 5, overtime_grace = 3, convergence_after = 100, hard_cap = 20,
+        pulse_after = 30, anneal = false, rng = make_rng(19) })
+    Bruteforce.report_result(st2, make_baseline(10), 10, true)  -- reference
+    Bruteforce.report_result(st2, make_baseline(9), 9, true)    -- improvement
+    Bruteforce.report_result(st2, make_baseline(8), 8, true)    -- improvement
+    Bruteforce.report_result(st2, make_baseline(20), 20, false, 50)
+    Bruteforce.report_result(st2, make_baseline(20), 20, false, 50)
+    check('overtime: budget spent but hot streak -> keeps going',
+        st2.tried >= st2.budget and Bruteforce.done(st2) == false)
+    Bruteforce.report_result(st2, make_baseline(20), 20, false, 50)
+    check('overtime: streak cooled -> done', Bruteforce.done(st2) == true)
+    check('overtime: not flagged as converged', Bruteforce.summary(st2).converged == false)
+
+    -- hard cap: an absolute ceiling even while improving
+    local st3 = Bruteforce.new({ baseline = make_baseline(10), baseline_frames = 10,
+        budget = 2, hard_cap = 4, overtime_grace = 100, convergence_after = 1000,
+        pulse_after = 30, anneal = false, rng = make_rng(20) })
+    Bruteforce.report_result(st3, make_baseline(10), 10, true)
+    Bruteforce.report_result(st3, make_baseline(9), 9, true)
+    Bruteforce.report_result(st3, make_baseline(8), 8, true)
+    Bruteforce.report_result(st3, make_baseline(7), 7, true)
+    check('hard cap: stops even on a hot streak', Bruteforce.done(st3) == true)
+end
+
+-- improvement heatmap: winning windows heat up, and hot frames attract future local windows
+do
+    local st = Bruteforce.new({ baseline = make_baseline(20), baseline_frames = 20, max_frames = 20,
+        window_chance = 1.0, window_frac = 0.25, window_min = 2, heat_bias = 1.0,
+        pulse_after = 30, anneal = false, budget = 100, rng = make_rng(23) })
+    Bruteforce.report_result(st, make_baseline(20), 20, true) -- re-base + seed beam
+
+    -- an improving candidate that mutated frames 10..12 credits exactly those frames
+    st._last_wlo, st._last_whi = 10, 12
+    Bruteforce.report_result(st, make_baseline(18), 18, true)
+    check('heat: winning window credited', (st.heat[10] or 0) > 0 and (st.heat[11] or 0) > 0)
+    check('heat: frames outside the window untouched', st.heat[9] == nil and st.heat[13] == nil)
+
+    -- a non-improving candidate credits nothing
+    st._last_wlo, st._last_whi = 1, 3
+    Bruteforce.report_result(st, make_baseline(19), 19, true) -- worse than best (18): no credit
+    check('heat: losing window not credited', st.heat[1] == nil)
+
+    -- pick_window now gravitates toward the hot zone
+    st.heat = { [10] = 50 } -- one overwhelmingly hot frame
+    local hits, tries = 0, 30
+    for _ = 1, tries do
+        local wlo, whi = Bruteforce._pick_window(st, 1, 20)
+        if wlo <= 10 and whi >= 10 then hits = hits + 1 end
+    end
+    check('heat: local windows concentrate on the hot frame', hits >= tries * 0.8)
+
+    -- heat credit only lands on the reported candidate's own window: a sweep candidate (which
+    -- mutates no window) leaves the tracker cleared, so a stale window can never be credited
+    st._last_wlo, st._last_whi = 5, 6
+    local c = Bruteforce.next_candidate(st) -- best is all-duplicates: this is a sweep removal
+    check('heat: sweep candidate clears the stale window tracker',
+        c ~= nil and st._last_wlo == nil)
+end
+
+-- gain is ZEROED when the baseline never reached the goal (prevents applying a spurious result to
+-- an already-optimal sheet — the pipeline-breaks-a-sheet bug)
+do
+    -- baseline (first candidate) does NOT reach: reference stays stale, beam empty
+    local st = Bruteforce.new({ baseline = make_baseline(20), baseline_frames = 20, max_frames = 20,
+        budget = 100, rng = make_rng(41) })
+    Bruteforce.next_candidate(st)                       -- baseline
+    Bruteforce.report_result(st, make_baseline(20), 20, false, 200) -- baseline did NOT reach
+    check('no-ref: baseline_reached is false', st.baseline_reached == false)
+    check('no-ref: baseline_frames stays at the stale capture value', st.baseline_frames == 20)
+
+    -- a later candidate DOES reach in fewer frames -> best_frames drops, raw diff would be > 0
+    Bruteforce.report_result(st, make_baseline(14), 14, true, nil, { action = 1, x = 0, z = 0, hspeed = 5 })
+    check('no-ref: best_frames reflects the reaching candidate', st.best_frames == 14)
+    check('no-ref: summary gain is FORCED to 0 (no valid reference)', Bruteforce.summary(st).gain == 0)
+
+    -- and once a reaching candidate exists, further reaches still never fabricate a gain
+    Bruteforce.report_result(st, make_baseline(12), 12, true, nil, { action = 1, x = 0, z = 0, hspeed = 5 })
+    check('no-ref: still no fake gain after more reaches', Bruteforce.summary(st).gain == 0)
+end
+
+-- gain works normally when the baseline DID reach (valid reference)
+do
+    local st = Bruteforce.new({ baseline = make_baseline(20), baseline_frames = 20, max_frames = 20,
+        budget = 100, rng = make_rng(42) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, make_baseline(18), 18, true) -- baseline reaches, re-bases to 18
+    check('ref: baseline_reached true', st.baseline_reached == true)
+    check('ref: gain 0 right after re-basing', Bruteforce.summary(st).gain == 0)
+    Bruteforce.report_result(st, make_baseline(15), 15, true)
+    check('ref: real improvement produces a real gain', Bruteforce.summary(st).gain == 3)
+end
+
+-- synthetic / legacy core (no baseline_reached field) still reports its gain (chunk-mode compat)
+do
+    local synthetic = { baseline_frames = 30, best_frames = 24, beam = {}, tried = 0,
+        budget = 2000, improvements = 0, stagnation = 0, archive_count = 0,
+        convergence_after = 500, pulse_after = 30 }
+    check('legacy core: nil baseline_reached treated as valid -> gain reported',
+        Bruteforce.summary(synthetic).gain == 6)
+end
+
+-- angle_diff: shortest u16 angular distance with wraparound
+do
+    check('angle_diff: zero', Bruteforce.angle_diff(1000, 1000) == 0)
+    check('angle_diff: simple', Bruteforce.angle_diff(1000, 1100) == 100)
+    check('angle_diff: wraps the short way', Bruteforce.angle_diff(10, 65530) == 16)
+    check('angle_diff: half circle is the max', Bruteforce.angle_diff(0, 32768) == 32768)
+    check('angle_diff: symmetric', Bruteforce.angle_diff(60000, 100) == Bruteforce.angle_diff(100, 60000))
+end
+
+-- state_matches_goal: the chain-safe acceptance criterion (action + position + speed + angle)
+do
+    local goal = { action = 5, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 }
+    local exact = { action = 5, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 }
+    check('match: exact state accepted', Bruteforce.state_matches_goal(exact, goal, 50, 1.0, 256) == true)
+
+    check('match: wrong action rejected',
+        Bruteforce.state_matches_goal({ action = 6, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 },
+            goal, 50, 1.0, 256) == false)
+    check('match: position within radius accepted',
+        Bruteforce.state_matches_goal({ action = 5, x = 130, y = 0, z = 210, h_speed = 30, yaw = 16384 },
+            goal, 50, 1.0, 256) == true) -- dist ~31.6 < 50
+    check('match: position outside radius rejected',
+        Bruteforce.state_matches_goal({ action = 5, x = 200, y = 0, z = 200, h_speed = 30, yaw = 16384 },
+            goal, 50, 1.0, 256) == false)
+
+    -- speed: the chain-breaker the user hit — same spot, different speed -> rejected
+    check('match: speed within tol accepted',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 30.5, yaw = 16384 },
+            goal, 50, 1.0, 256) == true)
+    check('match: speed outside tol rejected (would desync the next sheet)',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 45, yaw = 16384 },
+            goal, 50, 1.0, 256) == false)
+
+    -- facing angle: same spot & speed but turned the wrong way -> rejected
+    check('match: angle within tol accepted',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 + 100 },
+            goal, 50, 1.0, 256) == true)
+    check('match: angle outside tol rejected',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 + 4000 },
+            goal, 50, 1.0, 256) == false)
+
+    -- backward compatible: nil tolerances / nil goal fields skip those checks (legacy position goal)
+    local pos_goal = { action = 5, x = 100, y = 0, z = 200 }
+    check('match: nil speed/angle tol -> position-only goal still works',
+        Bruteforce.state_matches_goal({ action = 5, x = 105, y = 0, z = 200, h_speed = 999, yaw = 0 },
+            pos_goal, 50, nil, nil) == true)
+    check('match: action-only goal (no position) accepts any position',
+        Bruteforce.state_matches_goal({ action = 5, x = 9999, y = 0, z = 9999 },
+            { action = 5 }, nil, nil, nil) == true)
+end
+
 print(string.format('bruteforce_test: %d passed, %d failed', passed, failed))
 os.exit(failed == 0 and 0 or 1)

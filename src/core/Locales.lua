@@ -180,6 +180,8 @@ Locales = {}
 ---@field public BRUTEFORCE_TRIED string
 ---@field public BRUTEFORCE_NICHES string
 ---@field public BRUTEFORCE_SPEED string
+---@field public BRUTEFORCE_SHAKE string
+---@field public BRUTEFORCE_STATUS_CONVERGED string
 ---@field public BRUTEFORCE_APPLY_BEST string
 ---@field public BRUTEFORCE_EXPORT_M64 string
 ---@field public BRUTEFORCE_STATUS_IDLE string
@@ -189,6 +191,7 @@ Locales = {}
 ---@field public BRUTEFORCE_STATUS_DONE string
 ---@field public BRUTEFORCE_STATUS_VERIFYING string
 ---@field public BRUTEFORCE_ERROR_CHUNK_DRIFT string
+---@field public BRUTEFORCE_ERROR_VERIFY_FAILED string
 ---@field public BRUTEFORCE_STATUS_APPLIED string
 ---@field public BRUTEFORCE_ERROR_NOT_READY string
 ---@field public BRUTEFORCE_ERROR_GOAL_NOT_REACHED string

@@ -107,6 +107,93 @@ function Bruteforce.to_overrides(frames, count, tas_factory, manual_mode)
     return out
 end
 
+---Estimates, for every baseline frame, the FULL-DEFLECTION stick direction that points at the goal —
+---without reading the camera. The trick: the captured baseline already pairs each stick input with
+---the world movement it produced, so the per-frame stick->world rotation is simply
+---`world_angle(movement) - stick_angle(input)`. Frames with no usable signal (deadzone stick, or
+---Mario barely moved) inherit the nearest valid estimate. The result drives the goal-aiming
+---mutation: directed search toward the target instead of blind stick noise. Pure.
+---@param inputs table[] the baseline inputs (1..n)
+---@param states table per-frame Mario states, 0-INDEXED: states[0] = before any input, states[i] = after input i ({ x, z })
+---@param goal table { x, z } the goal position
+---@return table|nil aims array 1..n of unit stick directions { x, y }, or nil when nothing usable
+function Bruteforce.estimate_aims(inputs, states, goal)
+    if goal == nil or goal.x == nil or goal.z == nil then return nil end
+    local n = #inputs
+    local thetas = {}
+    for i = 1, n do
+        local s0, s1, inp = states[i - 1], states[i], inputs[i]
+        if s0 and s1 and inp then
+            local dx = (s1.x or 0) - (s0.x or 0)
+            local dz = (s1.z or 0) - (s0.z or 0)
+            local sx, sy = inp.X or 0, inp.Y or 0
+            if math.sqrt(dx * dx + dz * dz) >= 1 and math.sqrt(sx * sx + sy * sy) >= 8 then
+                thetas[i] = math.atan(dz, dx) - math.atan(sy, sx)
+            end
+        end
+    end
+    -- fill gaps from the nearest valid estimate (backward pass, then forward pass)
+    local last = nil
+    for i = 1, n do
+        if thetas[i] ~= nil then last = thetas[i] elseif last ~= nil then thetas[i] = last end
+    end
+    last = nil
+    for i = n, 1, -1 do
+        if thetas[i] ~= nil then last = thetas[i] elseif last ~= nil then thetas[i] = last end
+    end
+    local aims, any = {}, false
+    for i = 1, n do
+        local th = thetas[i]
+        local s = states[i - 1] or states[i]
+        if th ~= nil and s ~= nil then
+            local g = math.atan(goal.z - (s.z or 0), goal.x - (s.x or 0))
+            local a = g - th
+            aims[i] = { x = math.cos(a), y = math.sin(a) }
+            any = true
+        end
+    end
+    return any and aims or nil
+end
+
+---Shortest distance between two SM64 u16 angles (0..65535 == 360 degrees), handling wraparound.
+---@param a integer
+---@param b integer
+---@return integer 0..32768
+function Bruteforce.angle_diff(a, b)
+    local d = math.abs((a - b) % 65536)
+    return math.min(d, 65536 - d)
+end
+
+---Whether Mario's current state matches the goal state within tolerances. This is the ACCEPTANCE
+---criterion for a reached candidate. Matching more than action+position — also horizontal speed and
+---facing angle — is what makes an optimization CHAIN-SAFE: a segment that ends in the same state
+---leaves every downstream sheet seeing the same start, so it does not desync the rest of the TAS.
+---A shorter path that reaches the same spot with a DIFFERENT speed/angle is rejected (it would break
+---the chain). Any goal field that is nil is not checked (backward compatible: a position-only or
+---action-only goal still works). Pure.
+---@param cur table { action, x, y, z, h_speed, yaw }
+---@param goal table { action, x, y, z, h_speed, yaw } — nil fields are skipped
+---@param radius number position tolerance (game units); nil/goal.x nil skips the position check
+---@param speed_tol number|nil horizontal-speed tolerance; nil (or goal.h_speed nil) skips it
+---@param angle_tol number|nil facing-angle tolerance (u16 units); nil (or goal.yaw nil) skips it
+---@return boolean
+function Bruteforce.state_matches_goal(cur, goal, radius, speed_tol, angle_tol)
+    if goal.action ~= nil and cur.action ~= goal.action then return false end
+    if goal.x ~= nil and radius ~= nil then
+        local dx = (cur.x or 0) - goal.x
+        local dy = (cur.y or 0) - (goal.y or 0)
+        local dz = (cur.z or 0) - goal.z
+        if dx * dx + dy * dy + dz * dz > radius * radius then return false end
+    end
+    if goal.h_speed ~= nil and speed_tol ~= nil then
+        if math.abs((cur.h_speed or 0) - goal.h_speed) > speed_tol then return false end
+    end
+    if goal.yaw ~= nil and angle_tol ~= nil then
+        if Bruteforce.angle_diff(cur.yaw or 0, goal.yaw) > angle_tol then return false end
+    end
+    return true
+end
+
 ---Splits a captured baseline into `n` roughly-equal chunks and picks each chunk's goal checkpoint
 ---from the recorded per-frame Mario states (the state at the chunk's last frame). Long segments are
 ---optimised chunk by chunk (each chunk reaches its checkpoint, chained), which is far more tractable
@@ -131,6 +218,7 @@ function Bruteforce.split(baseline, states, n)
         chunks[#chunks + 1] = {
             inputs = inputs,
             checkpoint = { action = cp.action, x = cp.x, y = cp.y, z = cp.z },
+            from = from, -- 1-based baseline frame this chunk starts at (for per-chunk aim estimation)
         }
         from = to + 1
     end
@@ -263,6 +351,11 @@ function Bruteforce.new(opts)
         multi_remove_chance = opts.multi_remove_chance or 0.15, -- chance a removal drops a short run (2-3) at once
         edge_nudge_chance = opts.edge_nudge_chance or 0.15, -- chance to slide a jump-button edge in time (timing search)
         insert_chance = opts.insert_chance or 0.08, -- chance a candidate duplicates a frame (compensates a removal / delays a tail)
+        -- Goal-aiming operator: per-frame full-deflection stick directions pointing at the goal,
+        -- estimated from the captured baseline (see estimate_aims). nil disables the operator.
+        aims = opts.aims,
+        aim_chance = opts.aim_chance or 0.08,   -- chance a perturbed frame snaps to its goal-aim direction
+        hold_chance = opts.hold_chance or 0.06, -- chance to smooth a short window into one held stick
         rotate_chance = opts.rotate_chance or 0.15, -- chance a frame's stick is ROTATED (angle search, magnitude kept)
         rotate_max_rad = opts.rotate_max_rad or 0.25, -- max rotation (radians) of a single stick rotation
         snap_chance = opts.snap_chance or 0.10,     -- chance a frame's stick is snapped to FULL deflection (127), angle kept
@@ -270,8 +363,34 @@ function Bruteforce.new(opts)
         window_chance = opts.window_chance or 0.35, -- chance to perturb only a local window (vs the whole editable region)
         window_frac = opts.window_frac or 0.25,     -- window size as a fraction of the editable length
         window_min = opts.window_min or 4,          -- minimum window length (below this, always perturb the whole region)
+        -- Improvement heatmap: frames whose mutations produced improvements accumulate heat, and
+        -- local windows are drawn toward the hot zones — the search learns WHERE the frames live.
+        heat = {},                                  -- frame index -> improvement credit
+        heat_bias = opts.heat_bias or 0.4,          -- chance a local window is centered on the heatmap
         edit_from = opts.edit_from or 1, -- only perturb frames >= this (chunk mode freezes the optimised prefix)
+        -- Early-abort pruning: once a best exists, a candidate that has not reached the goal by
+        -- best_frames + prune_slack can no longer improve (the slack keeps near-ties for the beam's
+        -- diversity / speed tie-break), so the driver cuts it there instead of running to max_frames.
+        -- The search literally gets FASTER as it improves. See Bruteforce.cutoff.
+        prune_slack = opts.prune_slack or 2,
+        -- Mid-run checkpoint (set by the driver via set_checkpoint after it snapshots the best run's
+        -- state at this frame): candidates tagged preserve_prefix leave frames 1..checkpoint_frame
+        -- untouched, so the driver can replay them FROM the checkpoint — half the emulator frames.
+        checkpoint_frame = nil,
+        suffix_prob = opts.suffix_prob or 0.5, -- chance to generate a checkpoint-compatible (suffix-only) mutation
+        -- Candidate dedupe: never spend an emulator run on an input list already tried.
+        dedupe = opts.dedupe ~= false,
+        seen = {},       -- candidate hash -> true
+        seen_count = 0,
         budget = opts.budget or 2000,
+        -- Convergence auto-stop: after this many candidates without any improvement the search is
+        -- declared converged and ends early (no point burning the rest of the budget). Scales with
+        -- the budget so big searches get proportionally more patience.
+        convergence_after = opts.convergence_after or math.max(200, math.floor((opts.budget or 2000) * 0.25)),
+        -- Overtime: when the budget runs out on a HOT STREAK (a recent improvement), the search
+        -- keeps going until the streak cools (overtime_grace stalls), capped at hard_cap candidates.
+        overtime_grace = opts.overtime_grace or 100,
+        hard_cap = opts.hard_cap or (opts.budget or 2000) * 2,
         pulse_after = opts.pulse_after or 40,
         -- rng: an explicit rng wins; else a seed gives a reproducible search; else math.random.
         rng = opts.rng or (opts.seed and make_lcg(opts.seed)) or math.random,
@@ -341,6 +460,38 @@ local function effective_chance(state)
     return math.min(1, state.perturb_chance + Bruteforce.temperature(state) * state.anneal_hot_chance)
 end
 
+---How many full stagnation periods (pulse_after candidates each) have passed without improvement.
+---0 while progressing; grows one level per period while stuck; resets with the next improvement.
+---Public for tests.
+---@param state table
+---@return integer
+local function stagnation_level(state)
+    if state.pulse_after <= 0 then return 0 end
+    return math.floor(state.stagnation / state.pulse_after)
+end
+Bruteforce._stagnation_level = stagnation_level
+
+---The stagnation escalation: while the search is improving these are exactly the base parameters,
+---and each stagnation level widens them — more button flips and frame removals (structural changes,
+---not just stick noise), more exploration from near-misses, LESS checkpoint suffix polish (fine
+---polish is what is failing), and a wider prune window (slower-but-different routes get to finish
+---and seed the beam/archive again instead of being cut). Everything snaps back the moment a better
+---solution is found. Public for tests.
+---@param state table
+---@return table eff { flip_chance, remove_chance, suffix_prob, explore_prob, slack_bonus }
+function Bruteforce.escalation(state)
+    local level = stagnation_level(state)
+    -- caps never go below the configured base, so an explicitly-high setting keeps its meaning
+    return {
+        flip_chance = math.min(math.max(0.5, state.flip_chance), state.flip_chance * (1 + level)),
+        remove_chance = math.min(math.max(0.6, state.remove_chance), state.remove_chance * (1 + 0.5 * level)),
+        suffix_prob = state.suffix_prob / (1 + level),
+        explore_prob = math.min(math.max(0.6, state.explore_prob), state.explore_prob * (1 + 0.3 * level)),
+        rotate_max_rad = math.min(math.pi, state.rotate_max_rad * (1 + 0.5 * level)),
+        slack_bonus = 2 * level,
+    }
+end
+
 -- Below this stick magnitude the game reads no movement (deadzone), so such a frame is a "wait".
 local STICK_DEADZONE = 8
 
@@ -398,7 +549,8 @@ Bruteforce._pick_removal_index = pick_removal_index
 ---@param out table[]
 ---@return integer removed
 local function apply_removal(state, out)
-    if (#out - state.edit_from + 1) <= 1 or state.rng() >= state.remove_chance then
+    if (#out - state.edit_from + 1) <= 1
+        or state.rng() >= Bruteforce.escalation(state).remove_chance then
         return 0
     end
     local n_remove = 1
@@ -433,6 +585,23 @@ local function pick_window(state, lo, hi)
     end
     local wlen = math.max(state.window_min, math.floor(span * state.window_frac))
     if wlen >= span then return lo, hi end
+    -- Heatmap draw: center the window on a frame sampled by improvement credit (hot frames win),
+    -- so the local search concentrates where mutations have actually been paying off.
+    if state.heat_bias > 0 and next(state.heat) ~= nil and state.rng() < state.heat_bias then
+        local total = 0
+        for i = lo, hi do total = total + 0.1 + (state.heat[i] or 0) end
+        local r = state.rng() * total
+        local acc, center = 0, hi
+        for i = lo, hi do
+            acc = acc + 0.1 + (state.heat[i] or 0)
+            if acc >= r then
+                center = i
+                break
+            end
+        end
+        local wlo = clamp(lo, center - math.floor(wlen / 2), hi - wlen + 1)
+        return wlo, wlo + wlen - 1
+    end
     local wlo = lo + math.floor(state.rng() * (span - wlen + 1))
     return wlo, wlo + wlen - 1
 end
@@ -487,6 +656,29 @@ local function apply_insert(state, out)
 end
 Bruteforce._apply_insert = apply_insert
 
+---Hold-smoothing mutation (in place): with probability hold_chance, copy one frame's stick over a
+---short following window (2-8 frames). Optimal SM64 inputs are usually clean HELD sticks; random
+---perturbation accumulates noise, and this operator is the counter-pressure that simplifies a noisy
+---stretch back into a hold. Buttons are untouched. Public for tests.
+---@param state table
+---@param out table[]
+---@return boolean held
+local function apply_hold(state, out)
+    if state.hold_chance <= 0 or state.rng() >= state.hold_chance then return false end
+    local lo, hi = state.edit_from, #out
+    if hi - lo < 2 then return false end
+    local len = 2 + math.floor(state.rng() * 7) -- 2..8 frames
+    local s = lo + math.floor(state.rng() * (hi - lo - 1))
+    local e = math.min(hi, s + len - 1)
+    local X, Y = out[s].X, out[s].Y
+    for i = s + 1, e do
+        out[i].X = X
+        out[i].Y = Y
+    end
+    return true
+end
+Bruteforce._apply_hold = apply_hold
+
 ---Produces a perturbed copy of the given input list.
 ---@param state table
 ---@param source table[]
@@ -506,11 +698,16 @@ local function perturb(state, source)
         out[i] = nil
     end
 
+    apply_hold(state, out)
+
     local mag = effective_magnitude(state)
     local chance = effective_chance(state)
+    local eff = Bruteforce.escalation(state) -- flips & rotation escalate while the search stalls
     -- Perturb either the whole editable region or a local window (see pick_window). Never touches the
     -- frozen prefix (frames before edit_from), which chunk mode relies on.
     local wlo, whi = pick_window(state, state.edit_from, #out)
+    -- remember where this candidate mutates, so an improvement credits the heatmap there
+    state._last_wlo, state._last_whi = wlo, whi
     for i = wlo, whi do
         local frame = out[i]
         if state.rng() < chance then
@@ -527,9 +724,18 @@ local function perturb(state, source)
             local x, y = frame.X, frame.Y
             local r = math.sqrt(x * x + y * y)
             if r >= STICK_DEADZONE then
-                local a = math.atan(y, x) + (state.rng() * 2 - 1) * state.rotate_max_rad
+                local a = math.atan(y, x) + (state.rng() * 2 - 1) * eff.rotate_max_rad
                 frame.X = clamp(-127, math.floor(r * math.cos(a) + 0.5), 127)
                 frame.Y = clamp(-127, math.floor(r * math.sin(a) + 0.5), 127)
+            end
+        end
+        -- Goal-aiming: snap the stick to full deflection POINTED AT THE GOAL (direction estimated
+        -- from the captured baseline, see estimate_aims) — directed search instead of blind noise.
+        if state.aims ~= nil and state.aim_chance > 0 and state.rng() < state.aim_chance then
+            local aim = state.aims[i] or state.aims[#state.aims]
+            if aim ~= nil then
+                frame.X = clamp(-127, math.floor(127 * aim.x + 0.5), 127)
+                frame.Y = clamp(-127, math.floor(127 * aim.y + 0.5), 127)
             end
         end
         if state.snap_chance > 0 and state.rng() < state.snap_chance then
@@ -543,7 +749,7 @@ local function perturb(state, source)
         end
         -- Independent jump-button (A/B/Z) toggle: explores frame-perfect jump timing even on frames
         -- whose stick was not perturbed.
-        if state.flip_chance > 0 and state.rng() < state.flip_chance then
+        if eff.flip_chance > 0 and state.rng() < eff.flip_chance then
             local btn = PERTURB_BUTTONS[math.floor(state.rng() * #PERTURB_BUTTONS) + 1]
             frame[btn] = not frame[btn]
         end
@@ -712,81 +918,281 @@ local function pick_archive_cell(state)
 end
 Bruteforce._pick_archive_cell = pick_archive_cell
 
--- Rebuilds the deterministic sweep queue against the CURRENT best: the indices of its redundant
--- frames (neutral waits / duplicates of the previous frame), end-first — removing near the end
--- disturbs the least of the run, so those are tried first.
+---The frame at which the driver may cut a running candidate: once a best exists, anything that has
+---not reached the goal by best_frames + prune_slack cannot improve, so there is no point emulating
+---the rest. Falls back to max_frames while nothing has been reached yet (the reference must be
+---measured in full). The search therefore speeds up as it improves.
+---@param state table
+---@return integer cutoff
+function Bruteforce.cutoff(state)
+    if #state.beam == 0 then return state.max_frames end
+    -- Stagnation widens the window (slack_bonus): when polish stalls, slower-but-different routes
+    -- are allowed to finish again so they can seed the beam/archive with fresh diversity.
+    return math.min(state.max_frames,
+        state.best_frames + state.prune_slack + Bruteforce.escalation(state).slack_bonus)
+end
+
+---Declares (or clears, with nil/empty) the mid-run checkpoint LADDER the driver holds: savestates of
+---the CURRENT best run after each listed frame count (ascending). While set, the core tags some
+---candidates `preserve_prefix = frame` (their frames 1..frame are bit-identical to the best), which
+---the driver replays from that checkpoint instead of the segment start. With a ladder of 1/2 and
+---3/4, mutations touching only the last quarter replay only ~25% of the frames.
+---@param state table
+---@param frames integer[]|nil ascending checkpoint frames
+function Bruteforce.set_checkpoints(state, frames)
+    if frames ~= nil and #frames == 0 then frames = nil end
+    state.checkpoint_frames = frames
+    -- deepest rung kept in checkpoint_frame for the sweep tagging fast path / backward compat
+    state.checkpoint_frame = frames and frames[1] or nil
+end
+
+---Single-checkpoint sugar over set_checkpoints (kept for compatibility and tests).
+---@param state table
+---@param frame integer|nil
+function Bruteforce.set_checkpoint(state, frame)
+    Bruteforce.set_checkpoints(state, frame ~= nil and { frame } or nil)
+end
+
+---The deepest checkpoint frame strictly below `first_touched`, or nil. Used to tag deterministic
+---sweep candidates with the cheapest replay start their change allows.
+---@param state table
+---@param first_touched integer
+---@return integer|nil
+local function deepest_checkpoint_before(state, first_touched)
+    local list = state.checkpoint_frames
+    if list == nil then return nil end
+    local best = nil
+    for i = 1, #list do
+        if list[i] < first_touched then best = list[i] end
+    end
+    return best
+end
+
+---A compact exact hash of a candidate (sticks + jump buttons per frame), used to skip duplicates.
+---@param list table[]
+---@return string
+local function hash_candidate(list)
+    local parts = {}
+    for i = 1, #list do
+        local f = list[i]
+        parts[i] = string.char(
+            (f.A and 1 or 0) + (f.B and 2 or 0) + (f.Z and 4 or 0),
+            (f.X or 0) + 128, (f.Y or 0) + 128)
+    end
+    return table.concat(parts)
+end
+Bruteforce._hash_candidate = hash_candidate
+
+-- Remembers a candidate as tried. Capped so a huge budget cannot grow the set unboundedly.
+local function mark_seen(state, candidate)
+    if not state.dedupe or state.seen_count >= 20000 then return end
+    local h = hash_candidate(candidate)
+    if not state.seen[h] then
+        state.seen[h] = true
+        state.seen_count = state.seen_count + 1
+    end
+end
+
+local function is_seen(state, candidate)
+    return state.dedupe and state.seen[hash_candidate(candidate)] == true
+end
+
+-- Rebuilds the deterministic sweep queue against the CURRENT best. Two families of guaranteed-worth
+-- candidates, end-first (changes near the end disturb the least of the run):
+--   1. remove: drop one redundant frame (neutral wait / duplicate of the previous frame) — the
+--      cheapest possible frame save;
+--   2. edge: shift one A/B/Z press/release edge by exactly 1 frame (both directions) — in SM64 most
+--      lost frames are button timing, so every edge of the best gets its +-1 tried systematically.
 local function rebuild_sweep(state)
     local queue = {}
     local list = state.best_list
     local hi = math.min(state.best_frames, #list)
-    for i = hi, state.edit_from, -1 do
+    local lo = math.max(state.edit_from, 1)
+
+    local redundant = {}
+    for i = hi, lo, -1 do
         if frame_is_neutral(list[i]) or (i > 1 and list[i - 1] ~= nil and frames_equal(list[i], list[i - 1])) then
-            queue[#queue + 1] = i
+            redundant[#redundant + 1] = i
+            queue[#queue + 1] = { kind = 'remove', idx = i }
         end
     end
+
+    -- edge / shift entries for a given step size k (queued end-first). k = 1 first (cheap fixes),
+    -- then k = 2 — a 2-frame retiming often works where both intermediate 1-frame moves fail, and
+    -- the random operators almost never land that exact coordinated change.
+    local function queue_button_moves(k)
+        for e = hi, math.max(lo + 1, 2), -1 do
+            for _, b in ipairs(PERTURB_BUTTONS) do
+                if (list[e][b] or false) ~= (list[e - 1][b] or false) then
+                    if e - k >= lo then
+                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = -1, k = k }
+                    end
+                    if e + k - 1 <= hi then
+                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = 1, k = k }
+                    end
+                end
+            end
+        end
+        -- shift: move a WHOLE press (both edges together, duration kept) by k frames.
+        for _, b in ipairs(PERTURB_BUTTONS) do
+            for i = hi, lo, -1 do
+                local held = list[i][b] or false
+                local prev = i > 1 and (list[i - 1][b] or false) or false
+                if held and not prev then
+                    local r = i
+                    local f = i + 1 -- falling edge (first frame past the press)
+                    while f <= hi and (list[f][b] or false) do f = f + 1 end
+                    if r - k >= lo then
+                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = -1, k = k }
+                    end
+                    if f + k - 1 <= hi then
+                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = 1, k = k }
+                    end
+                end
+            end
+        end
+    end
+    queue_button_moves(1)
+
+    -- adjacent-pair removals around redundant frames: when dropping one redundant frame alone broke
+    -- the run, dropping it TOGETHER with a neighbour sometimes still reaches (2 frames saved at once).
+    local paired = {}
+    for _, idx in ipairs(redundant) do
+        for _, p in ipairs({ idx - 1, idx }) do
+            if p >= lo and p + 1 <= hi and not paired[p] then
+                paired[p] = true
+                queue[#queue + 1] = { kind = 'remove2', idx = p }
+            end
+        end
+    end
+
+    queue_button_moves(2)
+
     state.sweep_queue = queue
     state.sweep_pos = 1
     state.sweep_base = state.best_frames
+    state.sweep_list = state.best_list
 end
 
----Returns the next DETERMINISTIC sweep candidate ("current best minus one redundant frame"), or nil
----when the sweep is exhausted for this best. Runs right after any new best is found: instead of
----waiting for the random removal mutation to stumble on them, every obviously-droppable frame of the
----best solution is tried exactly once, end-first. Each confirmed removal produces a new best, which
----rebuilds the queue — so this greedily peels off ALL removable frames before random search resumes.
----Public for tests.
+-- Builds the candidate for one sweep entry: a copy of the best with the entry's single change,
+-- padded to the timeout length. Tags preserve_prefix when the change lies entirely past the
+-- driver's checkpoint, so the driver can replay it from there.
+local function build_sweep_candidate(state, entry)
+    local out = {}
+    local first_touched
+    if entry.kind == 'remove' or entry.kind == 'remove2' then
+        local skip_to = entry.kind == 'remove2' and entry.idx + 1 or entry.idx
+        for i = 1, math.min(state.best_frames, #state.best_list) do
+            if i < entry.idx or i > skip_to then out[#out + 1] = clone_input(state.best_list[i]) end
+        end
+        first_touched = entry.idx
+    elseif entry.kind == 'edge' then
+        for i = 1, math.min(state.best_frames, #state.best_list) do
+            out[i] = clone_input(state.best_list[i])
+        end
+        local b, e, k = entry.btn, entry.e, entry.k or 1
+        if entry.dir < 0 then
+            local v = out[e][b] or false -- extend the post-edge value k frames back
+            for i = e - k, e - 1 do out[i][b] = v end
+            first_touched = e - k
+        else
+            local v = out[e - 1][b] or false -- extend the pre-edge value k frames forward
+            for i = e, e + k - 1 do out[i][b] = v end
+            first_touched = e
+        end
+    else -- shift: move the whole press [r, f-1] by k frames, keeping its duration
+        for i = 1, math.min(state.best_frames, #state.best_list) do
+            out[i] = clone_input(state.best_list[i])
+        end
+        local b, r, f, k = entry.btn, entry.r, entry.f, entry.k or 1
+        if entry.dir < 0 then
+            for i = r - k, r - 1 do out[i][b] = true end
+            for i = f - k, f - 1 do out[i][b] = false end
+            first_touched = r - k
+        else
+            for i = r, r + k - 1 do out[i][b] = false end
+            for i = f, f + k - 1 do out[i][b] = true end
+            first_touched = r
+        end
+    end
+    for i = #out + 1, state.max_frames do
+        out[i] = clone_input(out[#out])
+    end
+    out.preserve_prefix = deepest_checkpoint_before(state, first_touched)
+    return out
+end
+
+---Returns the next DETERMINISTIC sweep candidate, or nil when the sweep is exhausted for this best.
+---Runs right after any new best is found: every redundant frame of the best is tried removed, and
+---every jump-button edge is tried shifted +-1 frame — exactly once each, end-first — instead of
+---waiting for the random mutations to stumble on them. Each success produces a new best, which
+---rebuilds the queue, so the sweep greedily drains ALL guaranteed candidates before random search
+---resumes. Already-tried candidates (dedupe) are skipped without consuming budget. Public for tests.
 ---@param state table
 ---@return table[]|nil candidate
 local function next_sweep_candidate(state)
     if not state.sweep_enabled or #state.beam == 0 then return nil end
     if state.best_frames - state.edit_from + 1 <= 1 then return nil end
-    if state.sweep_queue == nil or state.sweep_base ~= state.best_frames then
+    -- rebuild when the best changed — by frame count OR by identity (a same-frame, faster-arriving
+    -- solution took the front): the sweeps must always anchor on the actual current best.
+    if state.sweep_queue == nil or state.sweep_base ~= state.best_frames
+        or state.sweep_list ~= state.best_list then
         rebuild_sweep(state)
     end
     while state.sweep_pos <= #state.sweep_queue do
-        local idx = state.sweep_queue[state.sweep_pos]
+        local entry = state.sweep_queue[state.sweep_pos]
         state.sweep_pos = state.sweep_pos + 1
-        if idx <= state.best_frames then
-            local out = {}
-            for i = 1, math.min(state.best_frames, #state.best_list) do
-                if i ~= idx then out[#out + 1] = clone_input(state.best_list[i]) end
+        -- highest frame index the entry touches (guards against a stale queue past the best's end)
+        local top
+        local k = entry.k or 1
+        if entry.kind == 'remove' then
+            top = entry.idx
+        elseif entry.kind == 'remove2' then
+            top = entry.idx + 1
+        elseif entry.kind == 'edge' then
+            top = entry.dir < 0 and entry.e or entry.e + k - 1
+        else
+            top = entry.dir < 0 and entry.f - 1 or entry.f + k - 1
+        end
+        if top <= state.best_frames then
+            local out = build_sweep_candidate(state, entry)
+            if not is_seen(state, out) then
+                return out
             end
-            -- pad to the timeout length, like perturb() does
-            for i = #out + 1, state.max_frames do
-                out[i] = clone_input(out[#out])
-            end
-            return out
         end
     end
     return nil
 end
 Bruteforce._next_sweep_candidate = next_sweep_candidate
 
----Returns the next candidate input list to try, or nil when the search budget is exhausted.
----The first candidate is the unperturbed baseline. Next come the DETERMINISTIC sweep candidates
----(current best minus each redundant frame — guaranteed cheap savings). After that it perturbs
----either a beam member (a solution, to shave more frames), a crossover of two beam members, or,
----with probability explore_prob, a near-miss from the explore pool (to discover a new reaching
----route). Both pools are biased toward their best entries.
----@param state table
----@return table[]|nil candidate
-function Bruteforce.next_candidate(state)
-    if state.tried >= state.budget then
-        return nil
-    end
-    if state._first then
-        state._first = false
-        return clone_list(state.baseline)
-    end
-    -- Deterministic removal sweep first: guaranteed-cheap frame savings before any random search.
-    local sweep = next_sweep_candidate(state)
-    if sweep ~= nil then
-        return sweep
-    end
+-- One stochastic candidate: the priority ladder of the random search (archive niche > checkpoint
+-- suffix polish > crossover > explore pool > beam > baseline).
+local function generate_random(state)
+    -- Stagnation escalation: while stuck, polish gives way to exploration (see Bruteforce.escalation).
+    local eff = Bruteforce.escalation(state)
     -- Quality-diversity expansion: sometimes expand a random archive niche instead of the beam, to
     -- keep exploring distinct routes and escape local optima (no-op until the archive has cells).
     if state.archive_count > 0 and state.rng() < state.archive_prob then
         return perturb(state, pick_archive_cell(state))
+    end
+    -- Checkpoint suffix polish: mutate ONLY past one rung of the driver's checkpoint ladder, leaving
+    -- the best's prefix untouched — the driver then replays these from that rung's savestate (half
+    -- the emulator cost at the 1/2 rung, a quarter at the 3/4 rung). Fades out while stagnating
+    -- (polish is what is failing).
+    if state.checkpoint_frames ~= nil and #state.beam > 0 and state.rng() < eff.suffix_prob then
+        local usable = {}
+        for _, frame in ipairs(state.checkpoint_frames) do
+            if state.best_frames > frame + 2 then usable[#usable + 1] = frame end
+        end
+        if #usable > 0 then
+            local frame = usable[math.floor(state.rng() * #usable) + 1]
+            local saved = state.edit_from
+            state.edit_from = math.max(saved, frame + 1)
+            local out = perturb(state, state.best_list)
+            state.edit_from = saved
+            out.preserve_prefix = frame
+            return out
+        end
     end
     -- Crossover: recombine two beam parents (a prefix of one + a suffix of the other), then mutate.
     if state.crossover_chance > 0 and #state.beam >= 2 and state.rng() < state.crossover_chance then
@@ -796,7 +1202,7 @@ function Bruteforce.next_candidate(state)
             return perturb(state, crossover(state, a, b))
         end
     end
-    local use_explore = #state.explore > 0 and (#state.beam == 0 or state.rng() < state.explore_prob)
+    local use_explore = #state.explore > 0 and (#state.beam == 0 or state.rng() < eff.explore_prob)
     if use_explore then
         return perturb(state, pick_biased(state, state.explore))
     elseif #state.beam > 0 then
@@ -804,6 +1210,43 @@ function Bruteforce.next_candidate(state)
     end
     -- nothing reached and no near-miss yet: keep perturbing the baseline
     return perturb(state, state.baseline)
+end
+
+---Returns the next candidate input list to try, or nil when the search budget is exhausted.
+---The first candidate is the unperturbed baseline. Next come the DETERMINISTIC sweep candidates
+---(remove each redundant frame / shift each button edge +-1 — guaranteed-worth tries). After that
+---the stochastic ladder takes over (see generate_random). Duplicate candidates are skipped
+---(deterministic ones) or regenerated (stochastic ones) so no emulator run is wasted on an input
+---list that was already measured.
+---@param state table
+---@return table[]|nil candidate
+function Bruteforce.next_candidate(state)
+    if Bruteforce.done(state) then
+        return nil
+    end
+    -- forget the previous candidate's mutation window; perturb() re-records it, so heat credit only
+    -- ever lands on the window of the candidate actually being reported
+    state._last_wlo, state._last_whi = nil, nil
+    if state._first then
+        state._first = false
+        local base = clone_list(state.baseline)
+        mark_seen(state, base)
+        return base
+    end
+    local sweep = next_sweep_candidate(state)
+    if sweep ~= nil then
+        mark_seen(state, sweep)
+        return sweep
+    end
+    local cand = generate_random(state)
+    if state.dedupe then
+        for _ = 1, 2 do
+            if not is_seen(state, cand) then break end
+            cand = generate_random(state) -- already measured: reroll rather than waste an emulator run
+        end
+        mark_seen(state, cand)
+    end
+    return cand
 end
 
 ---Reports the outcome of running the candidate returned by the last next_candidate call.
@@ -832,6 +1275,12 @@ function Bruteforce.report_result(state, candidate, frames, reached, distance, e
     -- offset the emulator's per-candidate savestate reload could introduce).
     if not state._reference_set then
         state._reference_set = true
+        -- Whether the baseline itself reproduced the goal. If it did NOT (the search's action+radius
+        -- goal detection didn't fire on the captured baseline replay), there is NO valid reference:
+        -- baseline_frames stays at the stale capture value, so a later candidate reaching in fewer
+        -- frames would show a FAKE positive gain. summary() forces gain to 0 in that case, which
+        -- stops a spurious result from ever being applied to a sheet (it would break it). See summary.
+        state.baseline_reached = reached
         if reached then
             state.baseline_frames = frames
             beam_insert(state, candidate, frames, end_state and end_state.hspeed) -- seed the beam with the baseline
@@ -848,32 +1297,58 @@ function Bruteforce.report_result(state, candidate, frames, reached, distance, e
     end
 
     local prev_best = state.best_frames
+    local prev_front = state.beam[1]
     beam_insert(state, candidate, frames, end_state and end_state.hspeed)
-    if state.best_frames < prev_best then
+    -- An improvement is a shorter run, OR — at equal frames — a faster-arriving one taking the
+    -- beam's front (a better chaining base). Both reset the stagnation machinery and re-anchor the
+    -- deterministic sweeps / checkpoints on the new best.
+    if state.best_frames < prev_best or state.beam[1] ~= prev_front then
         state.improvements = state.improvements + 1
         state.stagnation = 0
         state.pulse_bonus = 0 -- cool down after an improvement
+        -- heatmap credit: the frames this winning candidate mutated get hotter, drawing future
+        -- local windows toward them (see pick_window)
+        if state._last_wlo ~= nil then
+            local credit = 1 / (state._last_whi - state._last_wlo + 1)
+            for i = state._last_wlo, state._last_whi do
+                state.heat[i] = (state.heat[i] or 0) + credit
+            end
+        end
         return true
     end
     register_stagnation(state)
     return false
 end
 
----Whether the search budget has been fully consumed.
+---Whether the search should stop. Three exits:
+---  converged — convergence_after candidates without improvement (burning more budget is pointless);
+---  hard cap  — the absolute candidate ceiling (2x budget by default);
+---  budget    — the budget is spent AND the search is not on a hot streak (overtime: a search that
+---              improved within the last overtime_grace candidates keeps going, up to the hard cap).
 ---@param state table
 ---@return boolean
 function Bruteforce.done(state)
-    return state.tried >= state.budget
+    if state.stagnation >= state.convergence_after then return true end
+    if state.tried >= (state.hard_cap or state.budget) then return true end
+    if state.tried >= state.budget then
+        return state.improvements == 0 or state.stagnation >= state.overtime_grace
+    end
+    return false
 end
 
 ---A snapshot of the current search progress for display.
 ---@param state table
 ---@return table summary { best_frames, baseline_frames, gain, tried, budget, improvements, niches, stagnation, best_hspeed }
 function Bruteforce.summary(state)
+    -- gain is only meaningful when the baseline itself reached the goal (a valid reference). A search
+    -- whose baseline never reproduced the goal has a stale baseline_frames, so its "gain" would be
+    -- fake — force it to 0 so nothing spurious is ever applied. (nil = legacy/synthetic core that
+    -- predates this field; treat as reached so chunk-mode verified results still report their gain.)
+    local valid_reference = state.baseline_reached ~= false
     return {
         best_frames = state.best_frames,
         baseline_frames = state.baseline_frames,
-        gain = state.baseline_frames - state.best_frames,
+        gain = valid_reference and math.max(0, state.baseline_frames - state.best_frames) or 0,
         tried = state.tried,
         budget = state.budget,
         improvements = state.improvements,
@@ -882,6 +1357,14 @@ function Bruteforce.summary(state)
         -- horizontal speed at the goal of the best solution (nil until measured); among equal-frame
         -- solutions the beam keeps the fastest-arriving one, which chains best into the next segment
         best_hspeed = state.beam and state.beam[1] and state.beam[1].hspeed or nil,
+        -- current stagnation-escalation level (0 = progressing/precise; each level = one pulse_after
+        -- period without improvement, widening the search — see Bruteforce.escalation)
+        shake = (state.stagnation ~= nil and state.pulse_after ~= nil)
+            and stagnation_level(state) or 0,
+        -- whether the search ended by CONVERGENCE (a long streak with zero improvement) rather than
+        -- by exhausting its budget — "likely optimal for this budget"
+        converged = (state.stagnation ~= nil and state.convergence_after ~= nil)
+            and state.stagnation >= state.convergence_after or false,
     }
 end
 

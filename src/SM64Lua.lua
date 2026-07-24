@@ -270,7 +270,10 @@ local function draw_navbar()
 end
 
 local function atdrawd2d()
-    d2d.set_target_fps(emu.get_ff() and Settings.ff_fps or nil)
+    -- During an active bruteforce search, throttle the GUI redraw hard: every redrawn frame is CPU
+    -- taken from the emulation the search is waiting on. 4 fps still shows the live status.
+    local search_active = BruteforceDriver ~= nil and BruteforceDriver.active
+    d2d.set_target_fps(emu.get_ff() and (search_active and 4 or Settings.ff_fps) or nil)
 
     if d2d and d2d.clear then
         d2d.clear(0, 0, 0, 0)
