@@ -181,6 +181,18 @@ Locales = {}
 ---@field public BRUTEFORCE_NICHES string
 ---@field public BRUTEFORCE_SPEED string
 ---@field public BRUTEFORCE_SHAKE string
+---@field public BRUTEFORCE_REACHES string
+---@field public BRUTEFORCE_SWEEP string
+---@field public BRUTEFORCE_MISS string
+---@field public BRUTEFORCE_END_DIST string
+---@field public BRUTEFORCE_RADIUS string
+---@field public BRUTEFORCE_BLOCKED string
+---@field public BRUTEFORCE_BY_SPEED string
+---@field public BRUTEFORCE_BY_ANGLE string
+---@field public BRUTEFORCE_CHAIN string
+---@field public BRUTEFORCE_CHAIN_FREE string
+---@field public BRUTEFORCE_CHAIN_LOCKED string
+---@field public BRUTEFORCE_GOAL_NEVER_REACHED string
 ---@field public BRUTEFORCE_STATUS_CONVERGED string
 ---@field public BRUTEFORCE_APPLY_BEST string
 ---@field public BRUTEFORCE_EXPORT_M64 string
@@ -192,6 +204,7 @@ Locales = {}
 ---@field public BRUTEFORCE_STATUS_VERIFYING string
 ---@field public BRUTEFORCE_ERROR_CHUNK_DRIFT string
 ---@field public BRUTEFORCE_ERROR_VERIFY_FAILED string
+---@field public BRUTEFORCE_ERROR_NOT_VERIFIED string
 ---@field public BRUTEFORCE_STATUS_APPLIED string
 ---@field public BRUTEFORCE_ERROR_NOT_READY string
 ---@field public BRUTEFORCE_ERROR_GOAL_NOT_REACHED string

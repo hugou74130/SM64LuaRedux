@@ -89,7 +89,8 @@ Settings = {
         -- perturbation strength is auto-managed by the search core (annealing + stagnation pulse)
         budget = 2000,           -- maximum number of candidates to try per search
         fast_forward = true,     -- run the search at UltraFastForward speed
-        goal_radius = 50,        -- distance tolerance to the goal position (0 = action only)
+        goal_radius = 0,         -- distance tolerance to the goal position (0 = derived from Mario's
+                                 -- per-frame travel at the goal; see Bruteforce.auto_goal_radius)
         -- (chain-safety speed/angle matching is AUTOMATIC in the driver — no user setting)
         chunks = 1,              -- split long segments into N chunks optimised in sequence (1 = off)
     },

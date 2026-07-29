@@ -22,6 +22,54 @@ Bruteforce = {}
 -- Stick X/Y are handled separately. START / dpad / C are never touched (they change intent).
 local PERTURB_BUTTONS = { 'A', 'B', 'Z' }
 
+-- Known SM64 movement techniques, as button stamps laid over consecutive frames from an insertion
+-- point (the stick is left alone, so Mario keeps heading where the baseline was already heading).
+--
+-- Why this exists: every other operator is subtractive or corrective — it removes frames, retimes an
+-- EXISTING button edge, or jitters the stick. None of them can INVENT a movement the baseline does not
+-- contain, so a segment that is slow because it walks where it should have dived/long-jumped is
+-- unimprovable no matter how long the search runs (a plain walk has no button edges to retime, and
+-- landing "A here, then B two frames later" by random flips essentially never happens).
+--
+-- The search only PROPOSES these; the emulator judges. A pattern that does not apply in Mario's
+-- current state simply fails to reach the goal and costs one candidate, so this table does not have to
+-- be a perfect model of SM64 — it just has to name the moves worth trying.
+-- An empty stamp frame means "leave this frame alone" (the airborne gap inside a dive).
+-- The SAME stamp means different moves depending on Mario's state (B is a dive while running but a
+-- punch standing still; Z+A is a long jump running and a backflip stationary), which is exactly why
+-- proposing rather than modelling works: one entry covers every state it applies in.
+local TECHNIQUES = {
+    -- airborne distance
+    { name = 'jump', stamp = { { A = true } } },
+    { name = 'double_jump', stamp = { { A = true }, {}, {}, { A = true } } },
+    { name = 'longjump', stamp = { { Z = true, A = true } } },
+    { name = 'longjump_z', stamp = { { Z = true }, { Z = true, A = true } } },
+    { name = 'longjump_dive', stamp = { { Z = true, A = true }, {}, { B = true } } },
+    { name = 'backflip', stamp = { { Z = true }, {}, { A = true } } },
+    -- dives: fast, cover ground, end in a slide
+    { name = 'dive', stamp = { { A = true }, { B = true } } },
+    { name = 'dive_late', stamp = { { A = true }, {}, { B = true } } },
+    { name = 'dive_ground', stamp = { { B = true } } },
+    { name = 'dive_recover', stamp = { { B = true }, {}, {}, {}, { A = true } } },
+    -- ground moves
+    { name = 'slide_kick', stamp = { { Z = true, B = true } } },
+    { name = 'crouch_slide', stamp = { { Z = true } } },
+    { name = 'ground_pound', stamp = { { A = true }, {}, { Z = true } } },
+}
+Bruteforce._TECHNIQUES = TECHNIQUES
+
+-- Upper bound on how many technique candidates one sweep may queue, so a long segment cannot flood
+-- the budget with them (positions are strided to fit). This budget is shared across ALL techniques,
+-- so it scales with the size of the table: too low and adding a technique silently buys variety by
+-- giving up position granularity, which matters because a move landed a few frames off usually fails.
+local TECH_MAX_ENTRIES = 900
+
+-- Window lengths for the aim sweep, in frames (0 = from the start point to the end of the run).
+-- Re-aiming a single frame almost never saves one; travelling a whole stretch straighter does, so the
+-- windows span from a short correction to the entire remainder.
+local AIM_WINDOWS = { 8, 16, 32, 64, 0 }
+local AIM_MAX_ENTRIES = 320
+
 local function clamp(min, n, max)
     if n < min then return min end
     if n > max then return max end
@@ -168,16 +216,26 @@ end
 ---criterion for a reached candidate. Matching more than action+position — also horizontal speed and
 ---facing angle — is what makes an optimization CHAIN-SAFE: a segment that ends in the same state
 ---leaves every downstream sheet seeing the same start, so it does not desync the rest of the TAS.
----A shorter path that reaches the same spot with a DIFFERENT speed/angle is rejected (it would break
----the chain). Any goal field that is nil is not checked (backward compatible: a position-only or
----action-only goal still works). Pure.
+---Any goal field that is nil is not checked (backward compatible: a position-only or action-only
+---goal still works). Pure.
+---
+---The speed check is deliberately ASYMMETRIC. Arriving at the goal with MORE horizontal speed than
+---the baseline is what a genuine frame-saving looks like in SM64 — it is a better handoff state, not
+---a desync risk — so it must not be rejected. A symmetric tolerance here structurally forbade every
+---real route improvement and let only trivial dead-frame removals through, which is why searches
+---converged almost immediately on a one-frame gain. Arriving SLOWER is still bounded tightly
+---(`speed_tol`): that is a genuinely worse handoff and the case that broke downstream sheets.
+---`speed_tol_up` bounds the fast side generously but not infinitely, so an absurd speed (a different
+---route/glitch rather than a tightened line) is still refused. Passing `speed_tol_up` as nil keeps
+---the old symmetric behaviour.
 ---@param cur table { action, x, y, z, h_speed, yaw }
 ---@param goal table { action, x, y, z, h_speed, yaw } — nil fields are skipped
 ---@param radius number position tolerance (game units); nil/goal.x nil skips the position check
----@param speed_tol number|nil horizontal-speed tolerance; nil (or goal.h_speed nil) skips it
+---@param speed_tol number|nil how much SLOWER than the goal is accepted; nil (or goal.h_speed nil) skips it
 ---@param angle_tol number|nil facing-angle tolerance (u16 units); nil (or goal.yaw nil) skips it
+---@param speed_tol_up number|nil how much FASTER than the goal is accepted; nil = symmetric (uses speed_tol)
 ---@return boolean
-function Bruteforce.state_matches_goal(cur, goal, radius, speed_tol, angle_tol)
+function Bruteforce.state_matches_goal(cur, goal, radius, speed_tol, angle_tol, speed_tol_up)
     if goal.action ~= nil and cur.action ~= goal.action then return false end
     if goal.x ~= nil and radius ~= nil then
         local dx = (cur.x or 0) - goal.x
@@ -186,12 +244,72 @@ function Bruteforce.state_matches_goal(cur, goal, radius, speed_tol, angle_tol)
         if dx * dx + dy * dy + dz * dz > radius * radius then return false end
     end
     if goal.h_speed ~= nil and speed_tol ~= nil then
-        if math.abs((cur.h_speed or 0) - goal.h_speed) > speed_tol then return false end
+        local delta = (cur.h_speed or 0) - goal.h_speed
+        if delta < -speed_tol then return false end
+        if delta > (speed_tol_up or speed_tol) then return false end
     end
     if goal.yaw ~= nil and angle_tol ~= nil then
         if Bruteforce.angle_diff(cur.yaw or 0, goal.yaw) > angle_tol then return false end
     end
     return true
+end
+
+---Whether any sheet in `sheets` chains (directly or transitively) off `sheet` — i.e. whether anything
+---downstream would be broken by changing this segment's end state. This decides whether the search has
+---to stay chain-safe at all: in the normal flow a sheet is bruteforced BEFORE the next one is written,
+---so nothing depends on its end state and constraining the end speed/angle would only reject real
+---gains. Guards against a malformed base cycle (hand-edited project) so it can never spin. Pure.
+---@param sheets table[]|nil every sheet in the project
+---@param sheet table|nil the sheet being optimized
+---@return boolean
+function Bruteforce.has_dependents(sheets, sheet)
+    if sheets == nil or sheet == nil then return false end
+    for i = 1, #sheets do
+        local other = sheets[i]
+        if other ~= nil and other ~= sheet then
+            local base = other._base_sheet
+            local seen = {}
+            while base ~= nil and not seen[base] do
+                if base == sheet then return true end
+                seen[base] = true
+                base = base._base_sheet
+            end
+        end
+    end
+    return false
+end
+
+---Derives a goal radius from how far Mario actually travels per frame near the goal, so the tolerance
+---is never a number the user has to guess.
+---
+---The scale that matters is ONE FRAME OF TRAVEL. Mario's positions are sampled once per frame, so a
+---radius below that lets him step straight over the goal without ever being measured inside it (the
+---goal would never be reached); a radius far above it lets the goal fire while he is merely PASSING,
+---several frames before he actually arrives — which inflates the gain by that slack and truncates the
+---applied result. Both failures were observed. Taking the fastest of the last few frames keeps the
+---radius catchable, and the 1.5 factor leaves margin for a candidate approaching on a slightly
+---different line. Clamped so a stopped Mario still gets a usable tolerance and a teleport/glitch frame
+---cannot blow it up. Pure.
+---@param states table per-frame positions { x, y, z }, indexed 0..n (states[0] = before any input)
+---@param n integer the goal frame index
+---@param opts table|nil { factor, min, max }
+---@return number|nil radius nil when there is not enough position data
+function Bruteforce.auto_goal_radius(states, n, opts)
+    if states == nil or n == nil or n < 1 then return nil end
+    opts = opts or {}
+    local travel = nil
+    for i = math.max(1, n - 2), n do
+        local a, b = states[i - 1], states[i]
+        if a ~= nil and b ~= nil then
+            local dx = (b.x or 0) - (a.x or 0)
+            local dy = (b.y or 0) - (a.y or 0)
+            local dz = (b.z or 0) - (a.z or 0)
+            local d = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if travel == nil or d > travel then travel = d end
+        end
+    end
+    if travel == nil then return nil end
+    return clamp(opts.min or 5, travel * (opts.factor or 1.5), opts.max or 150)
 end
 
 ---Splits a captured baseline into `n` roughly-equal chunks and picks each chunk's goal checkpoint
@@ -404,6 +522,19 @@ function Bruteforce.new(opts)
         sweep_queue = nil, -- removal indices still to try against the current best (end-first)
         sweep_pos = 1,
         sweep_base = nil,  -- the best_frames the queue was built for (rebuilt when it changes)
+        -- The sweep re-anchors on every new best, and the technique injections are by far its most
+        -- expensive tier (hundreds of entries, each a full emulator replay). Re-running ALL of them
+        -- after every improvement is what makes a long search drag: the cost is (improvements x whole
+        -- queue). They are therefore swept in full on the FIRST pass and then only every
+        -- `tech_every` rebuilds; the cheap tiers (removals, button retimings) still run every time,
+        -- which is what actually pays off right after an improvement. Set tech_every = 1 to restore
+        -- the exhaustive-every-time behaviour.
+        sweep_rebuilds = 0,
+        tech_every = opts.tech_every or 4,
+        -- Per-technique outcomes on THIS segment: { tries, reaches }. A technique with plenty of
+        -- tries and zero reaches does not apply here and is dropped from later sweeps (rebuild_sweep).
+        tech_stats = {},
+        tech_min_trials = opts.tech_min_trials or 25,
         beam = {},                        -- top-K reached candidates {list, frames, hspeed}, fewest frames first
         beam_width = opts.beam_width or 5, -- how many parallel candidates the search keeps
         -- Soft-fitness explore pool: the closest-K candidates that did NOT reach the goal, kept so the
@@ -422,6 +553,11 @@ function Bruteforce.new(opts)
         tie_to_newcomer = opts.tie_to_newcomer or 0.3, -- on a cell fitness tie, chance the newcomer replaces
         tried = 0,
         improvements = 0,
+        -- How many candidates ever reproduced the goal (baseline included). This is the single most
+        -- diagnostic number when a search reports no gain: 0 means the goal is never being reached at
+        -- all (bad goal / unreachable state), which is a completely different problem from "reached
+        -- often but nothing shorter was accepted".
+        reaches = 0,
         stagnation = 0,
         -- Perturbation magnitude/chance = a live floor (base_*) + annealing heat (proactive, high->low
         -- over the search) + a stagnation pulse (reactive). All three add up; see effective_*().
@@ -515,6 +651,26 @@ local function frames_equal(a, b)
     end
     return true
 end
+
+-- How far two stick values may differ and still count as "the same held input" for the removal sweep.
+local SWEEP_NEAR_TOL = 3
+
+---Whether two frames are NEARLY the same controller state (same buttons, sticks within `tol`). The
+---Semantic Workflow recomputes the stick from the intended angle through the LIVE camera every single
+---frame, so a steadily-held direction comes out as values that wobble by a unit or two rather than
+---repeating exactly. Against such a baseline an exact comparison finds almost no droppable frames,
+---which left the deterministic removal sweep with an essentially empty queue on stick-driven
+---segments (a plain walk has no button edges to sweep either). Pure.
+local function frames_near_equal(a, b, tol)
+    if math.abs((a.X or 0) - (b.X or 0)) > tol or math.abs((a.Y or 0) - (b.Y or 0)) > tol then
+        return false
+    end
+    for _, btn in ipairs(PERTURB_BUTTONS) do
+        if (a[btn] or false) ~= (b[btn] or false) then return false end
+    end
+    return true
+end
+Bruteforce._frames_near_equal = frames_near_equal
 
 ---Chooses a frame index to remove within [edit_from, #out]. Prefers "redundant" frames (neutral
 ---waits, or exact duplicates of the previous frame) because dropping those most often still reaches
@@ -1009,26 +1165,50 @@ local function rebuild_sweep(state)
     local hi = math.min(state.best_frames, #list)
     local lo = math.max(state.edit_from, 1)
 
+    -- Removal candidates in decreasing order of prior probability. Tier 3 makes the single-frame
+    -- removal sweep EXHAUSTIVE: dropping a frame is the most direct frame saving there is, and trying
+    -- every index costs at most best_frames candidates — far better value than spending the same
+    -- budget on random stick noise. Without it, a baseline with no neutral/duplicate frames and no
+    -- button edges (a Semantic Workflow walk) got no deterministic candidates at all.
+    -- Every entry carries a `prior` (how likely its tier is to pay off) and the `frame` it touches.
+    -- Both feed the final ordering: the queue is drained best-first rather than in tier order, so a
+    -- winning candidate surfaces in the first dozens instead of the several hundredth. That matters
+    -- doubly because the queue is REBUILT on every improvement — the cost of finding each gain is
+    -- paid again each time.
     local redundant = {}
+    local queued = {}
+    local function queue_remove(i, count_as_redundant, prior)
+        if queued[i] then return end
+        queued[i] = true
+        queue[#queue + 1] = { kind = 'remove', idx = i, frame = i, prior = prior }
+        if count_as_redundant then redundant[#redundant + 1] = i end
+    end
+
+    -- tier 1: obviously redundant — a neutral wait, or an exact duplicate of the previous frame
     for i = hi, lo, -1 do
         if frame_is_neutral(list[i]) or (i > 1 and list[i - 1] ~= nil and frames_equal(list[i], list[i - 1])) then
-            redundant[#redundant + 1] = i
-            queue[#queue + 1] = { kind = 'remove', idx = i }
+            queue_remove(i, true, 3.0)
+        end
+    end
+    -- tier 2: near-duplicates — the same held direction, jittered by the per-frame angle/camera maths
+    for i = hi, lo, -1 do
+        if i > 1 and list[i - 1] ~= nil and frames_near_equal(list[i], list[i - 1], SWEEP_NEAR_TOL) then
+            queue_remove(i, true, 3.0)
         end
     end
 
     -- edge / shift entries for a given step size k (queued end-first). k = 1 first (cheap fixes),
     -- then k = 2 — a 2-frame retiming often works where both intermediate 1-frame moves fail, and
     -- the random operators almost never land that exact coordinated change.
-    local function queue_button_moves(k)
+    local function queue_button_moves(k, prior)
         for e = hi, math.max(lo + 1, 2), -1 do
             for _, b in ipairs(PERTURB_BUTTONS) do
                 if (list[e][b] or false) ~= (list[e - 1][b] or false) then
                     if e - k >= lo then
-                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = -1, k = k }
+                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = -1, k = k, frame = e, prior = prior }
                     end
                     if e + k - 1 <= hi then
-                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = 1, k = k }
+                        queue[#queue + 1] = { kind = 'edge', btn = b, e = e, dir = 1, k = k, frame = e, prior = prior }
                     end
                 end
             end
@@ -1043,16 +1223,16 @@ local function rebuild_sweep(state)
                     local f = i + 1 -- falling edge (first frame past the press)
                     while f <= hi and (list[f][b] or false) do f = f + 1 end
                     if r - k >= lo then
-                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = -1, k = k }
+                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = -1, k = k, frame = r, prior = prior }
                     end
                     if f + k - 1 <= hi then
-                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = 1, k = k }
+                        queue[#queue + 1] = { kind = 'shift', btn = b, r = r, f = f, dir = 1, k = k, frame = r, prior = prior }
                     end
                 end
             end
         end
     end
-    queue_button_moves(1)
+    queue_button_moves(1, 2.6)
 
     -- adjacent-pair removals around redundant frames: when dropping one redundant frame alone broke
     -- the run, dropping it TOGETHER with a neighbour sometimes still reaches (2 frames saved at once).
@@ -1061,17 +1241,93 @@ local function rebuild_sweep(state)
         for _, p in ipairs({ idx - 1, idx }) do
             if p >= lo and p + 1 <= hi and not paired[p] then
                 paired[p] = true
-                queue[#queue + 1] = { kind = 'remove2', idx = p }
+                queue[#queue + 1] = { kind = 'remove2', idx = p, frame = p, prior = 2.2 }
             end
         end
     end
 
-    queue_button_moves(2)
+    queue_button_moves(2, 2.1)
+
+    -- Technique injection: try INVENTING a movement the baseline does not contain (a jump, dive or
+    -- long jump) at each insertion point. This is the only operator that can add a move rather than
+    -- trim or retime one, so it is what recovers a segment that is slow because it walks a distance it
+    -- should have covered with a technique. Positions are strided so a long segment cannot flood the
+    -- budget; queued before the speculative tier-3 removals since a found technique is worth many
+    -- frames while a removal is worth one.
+    -- Only on the first pass and every `tech_every` rebuilds after it — see sweep_rebuilds.
+    local include_tech = (state.sweep_rebuilds or 0) % math.max(1, state.tech_every or 1) == 0
+    local span = hi - lo + 1
+    if include_tech and span > 0 and #TECHNIQUES > 0 then
+        -- Learn from failure: a technique that has been tried plenty of times on THIS segment without
+        -- ever reproducing the goal does not apply here (a ground pound with nothing to land on, a
+        -- long jump where there is no room). Re-queueing its ~60 candidates on every full pass is pure
+        -- waste, so it is dropped for the rest of the search. Techniques with no verdict yet are
+        -- always kept, so nothing is judged before it has had a fair trial.
+        local live = {}
+        for t = 1, #TECHNIQUES do
+            local st = state.tech_stats and state.tech_stats[t]
+            if st == nil or st.reaches > 0 or st.tries < (state.tech_min_trials or 25) then
+                live[#live + 1] = t
+            end
+        end
+        if #live > 0 then
+            -- Stride from the FULL table, not from the survivors: dropping a dead technique must
+            -- actually REMOVE work, not hand its slots to the others at a finer granularity (which
+            -- would keep the queue pegged at the cap and save nothing).
+            local stride = math.max(1, math.ceil((span * #TECHNIQUES) / TECH_MAX_ENTRIES))
+            for _, t in ipairs(live) do
+                local len = #TECHNIQUES[t].stamp
+                for i = hi - len + 1, lo, -stride do
+                    if i >= lo then
+                        queue[#queue + 1] = { kind = 'tech', tech = t, at = i, frame = i, prior = 2.0 }
+                    end
+                end
+            end
+        end
+    end
+
+    -- AIM sweep: re-point the stick at the goal over a WINDOW of frames. This is the only
+    -- deterministic operator that changes DIRECTION — removals delete, retimings move buttons, and
+    -- technique stamps only add buttons, all of them leaving the stick untouched. So a segment that is
+    -- slow because Mario travels a curve he should have travelled straight had no systematic candidate
+    -- at all: the aim operator existed, but only as an 8%-chance flourish inside the RANDOM path,
+    -- which barely runs once the deterministic queue is this large. Needs the capture-estimated aims.
+    if state.aims ~= nil and span > 0 then
+        local stride = math.max(1, math.ceil((span * #AIM_WINDOWS) / AIM_MAX_ENTRIES))
+        for _, win in ipairs(AIM_WINDOWS) do
+            for i = hi, lo, -stride do
+                local len = win == 0 and (hi - i + 1) or win
+                if len > 0 and i + len - 1 <= hi then
+                    queue[#queue + 1] = { kind = 'aim', at = i, len = len, frame = i, prior = 2.4 }
+                end
+            end
+        end
+    end
+
+    -- tier 3: every remaining frame. The lowest prior — it is the speculative "try dropping ANY frame"
+    -- tier — so the ordering below naturally drains it last unless the heatmap says otherwise.
+    for i = hi, lo, -1 do
+        queue_remove(i, false, 1.0)
+    end
+
+    -- Order by expected value instead of by tier. `heat` records which frames past improvements came
+    -- from, so once anything has paid off the sweep concentrates there rather than grinding end-first
+    -- through hundreds of candidates that already failed. Heat is empty on the first pass, which
+    -- leaves the tier order exactly as before — no behaviour change until there is something to learn.
+    for i = 1, #queue do queue[i]._seq = i end
+    local heat = state.heat or {}
+    table.sort(queue, function(a, b)
+        local sa = (a.prior or 1) * (1 + (heat[a.frame or 0] or 0))
+        local sb = (b.prior or 1) * (1 + (heat[b.frame or 0] or 0))
+        if sa ~= sb then return sa > sb end
+        return a._seq < b._seq -- keep the original (end-first) order within equal scores
+    end)
 
     state.sweep_queue = queue
     state.sweep_pos = 1
     state.sweep_base = state.best_frames
     state.sweep_list = state.best_list
+    state.sweep_rebuilds = (state.sweep_rebuilds or 0) + 1
 end
 
 -- Builds the candidate for one sweep entry: a copy of the best with the entry's single change,
@@ -1100,6 +1356,38 @@ local function build_sweep_candidate(state, entry)
             for i = e, e + k - 1 do out[i][b] = v end
             first_touched = e
         end
+    elseif entry.kind == 'aim' then
+        -- Full-deflection stick pointed at the goal across the window; buttons untouched, so this
+        -- changes only the DIRECTION Mario travels, never what he does.
+        for i = 1, math.min(state.best_frames, #state.best_list) do
+            out[i] = clone_input(state.best_list[i])
+        end
+        local last = nil
+        for j = entry.at, math.min(entry.at + entry.len - 1, #out) do
+            local a = state.aims[j] or last
+            last = a or last
+            if a ~= nil then
+                out[j].X = clamp(-128, math.floor((a.x or 0) * 127 + 0.5), 127)
+                out[j].Y = clamp(-128, math.floor((a.y or 0) * 127 + 0.5), 127)
+            end
+        end
+        first_touched = entry.at
+    elseif entry.kind == 'tech' then
+        -- Stamp a technique's buttons over consecutive frames, leaving the stick (and any button the
+        -- stamp does not mention) untouched, so Mario keeps heading where the baseline sent him.
+        for i = 1, math.min(state.best_frames, #state.best_list) do
+            out[i] = clone_input(state.best_list[i])
+        end
+        local stamp = TECHNIQUES[entry.tech].stamp
+        for j = 1, #stamp do
+            local frame = out[entry.at + j - 1]
+            if frame ~= nil then
+                for _, b in ipairs(PERTURB_BUTTONS) do
+                    if stamp[j][b] then frame[b] = true end
+                end
+            end
+        end
+        first_touched = entry.at
     else -- shift: move the whole press [r, f-1] by k frames, keeping its duration
         for i = 1, math.min(state.best_frames, #state.best_list) do
             out[i] = clone_input(state.best_list[i])
@@ -1151,12 +1439,19 @@ local function next_sweep_candidate(state)
             top = entry.idx + 1
         elseif entry.kind == 'edge' then
             top = entry.dir < 0 and entry.e or entry.e + k - 1
+        elseif entry.kind == 'tech' then
+            top = entry.at + #TECHNIQUES[entry.tech].stamp - 1
+        elseif entry.kind == 'aim' then
+            top = entry.at + entry.len - 1
         else
             top = entry.dir < 0 and entry.f - 1 or entry.f + k - 1
         end
         if top <= state.best_frames then
             local out = build_sweep_candidate(state, entry)
             if not is_seen(state, out) then
+                -- Remember which technique produced this candidate so report_result can score it
+                -- (see tech_stats): that is how a technique that never applies here gets dropped.
+                state._last_tech = entry.kind == 'tech' and entry.tech or nil
                 return out
             end
         end
@@ -1227,6 +1522,7 @@ function Bruteforce.next_candidate(state)
     -- forget the previous candidate's mutation window; perturb() re-records it, so heat credit only
     -- ever lands on the window of the candidate actually being reported
     state._last_wlo, state._last_whi = nil, nil
+    state._last_tech = nil -- only a sweep technique candidate sets this; see report_result
     if state._first then
         state._first = false
         local base = clone_list(state.baseline)
@@ -1262,6 +1558,19 @@ end
 ---@return boolean improved whether this candidate became the new overall best
 function Bruteforce.report_result(state, candidate, frames, reached, distance, end_state)
     state.tried = state.tried + 1
+    if reached then state.reaches = (state.reaches or 0) + 1 end
+
+    -- Score the technique this candidate came from, if any. Enough tries with no reach means the
+    -- technique does not apply to this segment and later sweeps stop queueing it (rebuild_sweep).
+    if state._last_tech ~= nil then
+        local st = state.tech_stats[state._last_tech]
+        if st == nil then
+            st = { tries = 0, reaches = 0 }
+            state.tech_stats[state._last_tech] = st
+        end
+        st.tries = st.tries + 1
+        if reached then st.reaches = st.reaches + 1 end
+    end
 
     -- Feed the quality-diversity archive (keeps the best candidate per behaviour cell; drives the
     -- diverse expansion in next_candidate). Every candidate, reached or not, seeds/updates its cell.
@@ -1291,6 +1600,12 @@ function Bruteforce.report_result(state, candidate, frames, reached, distance, e
     if not reached then
         if distance ~= nil then
             explore_insert(state, candidate, distance) -- keep the near-miss to explore from
+            -- Closest any failing candidate ever came to the goal. When a search reports no gain this
+            -- says WHY the misses miss: a few units means the goal is nearly made (a radius or
+            -- end-state issue), hundreds means the mutations are throwing the run off entirely.
+            if state.closest_miss == nil or distance < state.closest_miss then
+                state.closest_miss = distance
+            end
         end
         register_stagnation(state)
         return false
@@ -1328,7 +1643,12 @@ end
 ---@param state table
 ---@return boolean
 function Bruteforce.done(state)
-    if state.stagnation >= state.convergence_after then return true end
+    -- Never claim convergence while guaranteed-worth candidates are still queued. The deterministic
+    -- sweep can hold more entries than `convergence_after` (the technique injections alone are
+    -- hundreds), and stopping mid-queue would both skip systematic work and report "likely optimal"
+    -- about a search that never finished checking. The hard cap below still bounds the run.
+    local sweep_pending = state.sweep_queue ~= nil and state.sweep_pos <= #state.sweep_queue
+    if state.stagnation >= state.convergence_after and not sweep_pending then return true end
     if state.tried >= (state.hard_cap or state.budget) then return true end
     if state.tried >= state.budget then
         return state.improvements == 0 or state.stagnation >= state.overtime_grace
@@ -1352,6 +1672,24 @@ function Bruteforce.summary(state)
         tried = state.tried,
         budget = state.budget,
         improvements = state.improvements,
+        -- Diagnostics for "why is the gain 0?". `best == baseline` with `gain 0` has two very
+        -- different causes that the frame counts alone cannot distinguish:
+        --   reaches == 0            -> the goal is NEVER reproduced (bad/unreachable goal). The beam is
+        --                              never seeded, the deterministic sweep never anchors, and gain is
+        --                              forced to 0 — the search structurally cannot find anything.
+        --   reaches > 0, gain == 0  -> the goal IS reached, but nothing shorter was ever accepted.
+        reaches = state.reaches or 0,
+        -- Whether the baseline replay itself reproduced the goal. false = there is no valid reference,
+        -- so `baseline_frames` is the stale capture value and gain is pinned to 0 on purpose.
+        baseline_reached = state.baseline_reached,
+        -- Deterministic sweep progress: how many guaranteed-worth candidates were queued against the
+        -- current best, and how many have been drained. `sweep_queued == 0` means the sweep found
+        -- NOTHING to try — the search is running on random mutation alone, which is the difference
+        -- between systematically answering "can a frame be dropped?" and hoping to stumble on it.
+        sweep_queued = state.sweep_queue and #state.sweep_queue or 0,
+        sweep_done = state.sweep_queue and math.min(state.sweep_pos - 1, #state.sweep_queue) or 0,
+        -- Closest a non-reaching candidate ever got to the goal (game units), nil if none missed.
+        closest_miss = state.closest_miss,
         niches = state.archive_count,       -- number of distinct behaviour cells the search is keeping
         stagnation = state.stagnation,      -- candidates since the last improvement (0 = just improved)
         -- horizontal speed at the goal of the best solution (nil until measured); among equal-frame

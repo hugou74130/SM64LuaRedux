@@ -4,6 +4,360 @@ Everything below was built while you slept. **Nothing is committed or pushed** (
 All pure logic is unit-tested: `lua tests/bruteforce_test.lua` → **193 passed, 0 failed** (was 127).
 The sheet-side wiring is verified headlessly (22 checks) with the real Sheet code.
 
+## Fix (2026-07-25, user-reported): "converges instantly and calls a 1-frame gain optimal"
+
+Symptom: searches applied cleanly and kept the chain in sync, but the gain was always derisory — the
+status went to "Converged — likely optimal" almost immediately on actions the user KNEW had several
+frames in them.
+
+Root cause, in the acceptance predicate (`state_matches_goal`): the chain-safety speed check was a
+**symmetric** `|cur - goal| > 1.0 -> reject`. In SM64 a genuine frame-saving arrives at the goal with
+MORE horizontal speed (a tightened line keeps speed) — so every real route improvement was rejected
+for being "too different", and only trivial dead-frame removals could pass. The deterministic sweep
+peels those off in the first seconds (the immediate small gain), after which nothing could ever be
+accepted → `convergence_after` candidates with zero improvement → "converged, probably optimal". The
+same strictness also wasted wall-clock: rejected candidates still ran to the early-abort cutoff.
+
+Fix (pure core, tested): the speed bound is now **asymmetric**. `state_matches_goal` takes an optional
+6th arg `speed_tol_up`; arriving slower stays bounded by `speed_tol` (that IS the desync case that
+broke downstream sheets), arriving faster is allowed up to `speed_tol_up` — bounded, so a wildly
+different route (glitch/skip rather than a tightened line) is still refused. Passing nil keeps the old
+symmetric behaviour, so every existing caller/test is unaffected. Driver: `CHAIN_SPEED_TOL` = 1.0
+(slow side), new `CHAIN_SPEED_TOL_UP` = 8.0 (fast side). The facing-angle tolerance was also widened
+`256 -> 1024` (~1.4° -> ~5.6°): the downstream sheet is semantic and re-aims every frame through the
+TAS engine, so it absorbs a few degrees, and 1.4° rejected real improvements for no chaining benefit.
+All four phases (run + verify) share the one computed `goal_reached`, so verification uses the same
+criterion as the search — no accept-then-discard mismatch. Tests: 294 passed (13 new).
+
+**If a chain ever desyncs after this**, `CHAIN_ANGLE_TOL` is the first knob to re-tighten: a downstream
+sheet already rewritten by a previous apply is frame-exact and less forgiving than a semantic one.
+
+### Follow-up the same day: chain-safety is now decided AUTOMATICALLY (and usually not needed at all)
+
+The user clarified their actual workflow: they write a sheet, bruteforce it, and only THEN write the
+next sheet ("Bruteforce ALL" no longer exists). So at search time there is normally **nothing
+downstream** — the whole speed/angle constraint was protecting against a desync that structurally
+cannot happen, while silently rejecting the real gains.
+
+It is now automatic (no knob, per the magic-button principle). `Bruteforce.has_dependents(sheets, sheet)`
+(pure, tested, cycle-guarded) reports whether any other sheet chains off this one, directly or
+transitively. The driver stores it once per search as `BruteforceDriver.chain_locked`:
+
+- **Free** (nothing chains off this sheet — the normal flow): the facing angle is not constrained at
+  all and a faster arrival is unbounded (`math.huge`). This is where the frame savings are.
+- **Locked** (a later sheet does chain off it, i.e. re-optimizing an earlier sheet — or any manual /
+  movie search, where the rest of the movie IS downstream): the tolerances above apply as written.
+
+The **slow** side stays bounded in BOTH cases: arriving slower is a worse platform for whatever comes
+next, so it is not a win even when nothing is chained yet. Default is `locked = true`, so anything
+that forgets to set it fails safe. Tests: 312 passed (18 more, incl. transitive/self/cycle cases).
+
+### Diagnostics: telling "no gain" apart from "the goal is never reached" (2026-07-25)
+
+First field test of the above came back inconclusive: a deliberately sloppy sheet, 501/2000 candidates,
+`best: 189 | ref: 189 | gain: 0`, `shake: 16`, "Converged — likely optimal". That readout has TWO
+possible causes which need OPPOSITE fixes and were indistinguishable in the UI:
+
+1. **The baseline never reproduced the goal.** Then `baseline_frames` keeps the stale capture value,
+   the beam is never seeded, the deterministic sweep never anchors, and `summary.gain` is pinned to 0
+   on purpose. The search *structurally cannot* find anything, and it still reports "likely optimal".
+2. The goal IS reached, but nothing shorter was ever accepted (a real search-quality problem).
+
+So the search now reports the discriminator. Core (pure, tested): `state.reaches` counts every
+candidate that reproduced the goal, and `summary` exposes `reaches` + `baseline_reached`. UI (row 9,
+where an error would otherwise go): `reached: N | chain: free/locked`, replaced by an explicit
+**"The goal is NEVER reached — no gain is possible"** message when `reaches == 0`, so this can never
+again be misread as "already optimal".
+
+Also fixed: a manual (`Set start` / `Set goal`) search was being locked on the assumption that "the
+rest of the movie is downstream" — untrue when no movie is loaded. It now locks only when a movie is
+actually present (`start_frame ~= nil`), so optimizing an action in isolation gets the same freedom as
+an unchained sheet. Note the manual flow needs SOMETHING to replay the action during capture (a movie
+or a sheet); with neither, the baseline cannot reach the goal — which is exactly case 1 above.
+Tests: 322 passed.
+
+### The actual root cause: an empty deterministic sweep on stick-driven segments (2026-07-25)
+
+With the diagnostics in place the next run read `reached: 33 | chain: free`, `best 189 | ref 189 |
+gain 0`. So the goal WAS reproduced 33 times and the chain was already unconstrained — yet not one
+candidate ever arrived in under 189 frames. That ruled out the acceptance criterion and pointed at
+candidate generation. Two real causes, both confirmed in code:
+
+1. **The removal sweep could see nothing to remove.** `rebuild_sweep` only queued a frame for removal
+   if it was `frame_is_neutral` or an EXACT duplicate of the previous frame, and only queued `edge`/
+   `shift` entries for A/B/Z edges. A Semantic Workflow baseline recomputes the stick every frame from
+   the intended angle through the LIVE camera, so a steadily-held direction comes out jittering by a
+   unit or two — never exactly equal — and a plain walk has no button edges at all. Measured on a
+   representative jittery walking baseline: **the old queue contained 0 removal candidates**. The
+   entire guaranteed-frame-saving machinery was inert, leaving only random stick noise (hence 33/501
+   reaching and nothing shorter). Fix: the removal queue is now tiered — (1) neutral/exact duplicates,
+   (2) near-duplicates (`frames_near_equal`, tolerance 3, for the per-frame angle/camera jitter),
+   (3) **every remaining frame, end-first**, so "can any single frame be dropped?" is always answered
+   exhaustively. Tier 3 is queued LAST so the cheap high-prior fixes still drain first. Cost is at most
+   `best_frames` candidates per best — far better value than spending the same budget on random noise.
+2. **The slow-speed bound rejected the very savings being sought.** On any accelerating movement,
+   reaching the same spot EARLIER means Mario had less time to accelerate, so he arrives SLOWER — a
+   "not more than 1.0 slower" bound therefore rejects precisely the frame savings we want. In the
+   unchained case the goal is now **action + position only**: speed is *preferred*, not *required*,
+   since `beam_insert` already keeps the fastest arrival among equal-frame solutions. Chained/movie
+   searches keep the full speed+angle criterion.
+
+Tests: 332 passed (10 new, incl. a regression test proving a jittery button-less baseline now yields
+an exhaustive set of removal candidates where it previously yielded none).
+
+### The gap that actually mattered: the search could not INVENT a movement (2026-07-25)
+
+The fixes above did not move the test case either (`reached: 35`, gain still 0, script reloaded). The
+missing piece came from the user describing how the sheet was made deliberately slow: **an action had
+been REMOVED** so Mario takes longer to arrive. The gain to recover is therefore *additive* — a
+movement has to be put back — and every operator in the tool is subtractive or corrective:
+
+- frame removal cannot add anything (and on that segment every frame is doing work, walking distance);
+- `apply_insert` DUPLICATES an existing frame, it invents nothing;
+- the button sweep only shifts A/B/Z edges that already exist — a plain walk has none;
+- random flips (`flip_chance` 0.05) would have to land A at frame k AND B a couple of frames later
+  with the right stick, which effectively never happens; every failed attempt also misses the goal.
+
+So the tool could polish what it was given but never propose a technique. Added: **technique
+injection** — a `TECHNIQUES` table (jump, long jump `Z+A`, `Z` then `Z+A`, dive `A,B`, late dive
+`A,_,B`) stamped over consecutive frames at strided insertion points, leaving the stick untouched so
+Mario keeps his heading. The search only PROPOSES; the emulator judges, so the table does not have to
+model SM64 exactly — a pattern that cannot apply just fails to reach and costs one candidate.
+Positions are strided under `TECH_MAX_ENTRIES` (400) so a long segment cannot flood the budget.
+
+Also fixed, and necessary for the above to run at all: **`Bruteforce.done` declared convergence at
+`convergence_after` (500) stalls even with deterministic candidates still queued.** The queue is now
+bigger than that (692 entries for a 189-frame walk: 189 removals + 188 pair removals + 315 technique
+injections), so the search would have stopped — reporting "likely optimal" — before trying a single
+technique. It now refuses to converge while the sweep queue has entries pending; the hard cap still
+bounds the run. Tests: 351 passed (19 new).
+
+**Result in mupen: it works.** `gain: 4` (was 0), `reached: 116` (was 35), `sweep: 714` queued,
+`shake: 0` — the user confirmed it found the action that had been removed.
+
+### SAFETY HOLE found from that run: Stop bypassed verification (2026-07-25)
+
+Reported right after: the found result, when replayed, left Mario stopped in a DIFFERENT action. Cause
+— the user had stopped the search by hand. `BruteforceDriver.stop()` went straight to `idle`, and
+`apply_to_sheet` gated only on `driving_sheet`, `core` and `gain > 0`. It never checked that the
+result had passed the end-to-end verification, so **a hand-stopped search could write an
+unreproducible result into the sheet** — exactly the corruption the SAFETY INVARIANTS in CLAUDE.md
+forbid ("It reproduces the goal end-to-end... never write an unreproducible result"). The invariant
+was implemented only on the natural-completion path.
+
+Fixed two ways, so stopping early is both safe AND still useful:
+
+1. **A result must be verified to leave the tool.** New `BruteforceDriver.verified`, false at search
+   start, set true only by the `verifysingle` success path and by the chunk-mode `finalize_verified`.
+   `apply_to_sheet` and `export_m64` refuse without it (`BRUTEFORCE_ERROR_NOT_VERIFIED`), and it is
+   part of the Apply/Export buttons' enable condition so they do not even look available.
+2. **Stop now finishes properly instead of discarding the work.** Stopping a single-mode search that
+   already has a positive gain hands it to `finish_single_search()` — the same verification a natural
+   completion runs — after which the result is applyable. Only from phase `run` (the other phases have
+   an async savestate callback in flight that would clobber the phase), chunk mode still aborts (it has
+   its own end-to-end verify), and pressing Stop again during the verification aborts for real.
+
+Driver-only change: NOT unit-testable off mupen, needs in-mupen validation.
+
+### REVERTED: weakening the unchained goal to action+position (2026-07-25)
+
+User report after applying a found result: Mario no longer performed the action — "comme si c'était
+coupé, il manque des frames". The applied sheet was TRUNCATED.
+
+Cause, and it was self-inflicted: the unchained ("chain: free") path had been changed to accept on
+**action + position only**, dropping the speed and angle checks. CLAUDE.md's SAFETY INVARIANTS say
+verbatim *"Do NOT weaken the goal back to action+position only"* — this is exactly that. With the
+end state unpinned, the goal fires the moment Mario is anywhere inside `goal_radius` (50 units ≈ two
+frames of walking) **while merely passing through**, instead of when he actually finishes the action.
+So part of the reported gain was just the radius' slack, and `apply_to_sheet` — which writes exactly
+`best_frames` inputs — cut the sheet short by those frames.
+
+Fix: `chain_locked` now changes **how tight** the end state must match, never **whether** it is
+matched. Unchained searches use widened tolerances (`CHAIN_SPEED_TOL_FREE` 4.0 slow /
+`CHAIN_SPEED_TOL_UP_FREE` 24.0 fast / `CHAIN_ANGLE_TOL_FREE` ~22°) so real gains are still reachable;
+chained and movie searches keep the tight ones. The end state matters even with nothing chained
+behind it, because **the user continues from there** — the earlier reasoning ("nothing downstream, so
+the end state is free") was wrong.
+
+Added with it: `ends from goal:` in the status row — the true distance between the VERIFIED result's
+end and the goal. The goal accepts anywhere inside the radius, so a large value here means the result
+stops short and part of the gain is radius slack; it makes a too-loose `goal_radius` visible instead
+of silently costing frames on apply.
+
+### Measured, not guessed: the fast-side speed bound was the whole problem (2026-07-25)
+
+The 174-frame segment kept returning gain 0 after three separate fixes (technique injection, the
+exhaustive removal tiers, the aim sweep) — each of which was a real defect, none of which was THIS
+segment's. Rather than guess a fourth time, the search was instrumented to say why candidates are
+refused. Three readings, each answering exactly one question:
+
+1. `refused at goal: 632@172` (best 174) — 632 runs stood at the goal POSITION in the goal ACTION as
+   early as frame **172**, and were refused. So neither the operators nor the position were at fault:
+   the END-STATE TOLERANCES were costing the frames.
+2. `speed 632 / angle 0` — every single refusal was the speed bound. The angle never refused anything.
+3. `speed 632(-0/+38)` — all of them on the FAST side, by up to **+38** against a bound of 24.
+
+Combined with `closest miss: 0` from the same runs (candidates were landing exactly on the goal point,
+not clipping the edge of the radius), these were genuine faster arrivals, not fly-throughs — and in
+SM64 arriving earlier WITH more speed is a better handoff for whatever is written next, not a risk.
+
+So `CHAIN_SPEED_TOL_UP_FREE` went 24 → **64**: a value taken from the measurement instead of chosen by
+feel, with margin, and still bounded so an implausible delta (a different route or a glitch rather
+than a tightened line) is refused. The slow side and the angle are untouched — they were never the
+problem here. Verified against the exact numbers: +38 on the goal point was refused before and is
+accepted now, +90 is still refused, a slower arrival is still refused.
+
+**If an applied result ever ends short of the goal again** (`ends from goal:` large), this bound is
+the first thing to bring back down — it is the one guarding against accepting a fly-through.
+
+### The blind spot: nothing deterministic ever changed the stick DIRECTION (2026-07-25)
+
+Field run with everything above in place, on a segment the user KNEW was improvable:
+`best 174 | ref 174 | gain 0`, `reached: 474` of 801, `sweep: 1156/1156`, `radius: 66` (auto).
+
+That readout is not a silent failure — it is an argued "no": the queue was **fully drained**, so every
+single-frame removal, every A/B/Z retiming and every technique injection was tried, and the goal was
+reproduced 474 times. Yet nothing was shorter.
+
+Cause, confirmed in code: the deterministic sweep had exactly five entry kinds — `remove`, `remove2`,
+`edge`, `shift`, `tech` — and **not one of them touches the stick**. Removals delete frames, retimings
+move buttons, technique stamps add buttons. The only operator that re-points the stick at the goal
+(`aim_chance`, 0.08) lives solely in the RANDOM path, which barely runs once the deterministic queue
+is 1156 entries: 801 candidates were tried and the search then converged. So on a segment whose waste
+is ANGULAR — Mario travelling a curve he should travel straight — nothing systematic addressed it.
+The high reach rate fits exactly: button changes do not break the run, they just never shorten it.
+
+Added an **aim sweep** tier: re-point the stick at the goal (`estimate_aims`) at full deflection over
+a WINDOW of frames, buttons untouched. Windows are `AIM_WINDOWS` = 8/16/32/64/rest-of-run — re-aiming
+a single frame almost never saves one, travelling a whole stretch straighter does — strided under
+`AIM_MAX_ENTRIES` (320). On a 174-frame segment that is 250 entries, and its prior (2.4) places the
+first aim candidate at queue position 174 versus 597 for the first technique. Skipped cleanly when
+there are no aims (action-only goal). Tests: 392 passed (6 new).
+
+### Intelligence instead of raw speed: order the sweep, and learn from failure (2026-07-25)
+
+The user's framing: "pour compenser la vitesse faut améliorer l'intelligence du bruteforce" — fewer
+candidates for the same result is the other way to be faster. Two blind spots, both in the
+deterministic queue, which is where **1194 of the ~2000 candidates** go:
+
+1. **The queue was completely unordered by evidence.** `heat` (which frames past improvements came
+   from) already existed but only steered the RANDOM windowed mutations; the deterministic sweep was
+   drained end-first by a fixed heuristic. So a winning entry could sit at position 677 — and that
+   cost is paid AGAIN after every improvement, since the queue is rebuilt each time. Every entry now
+   carries a `prior` (its tier's hit rate) and the `frame` it touches, and the queue is sorted by
+   `prior x (1 + heat[frame])`. Measured: a technique at frame 40 moves from position **677 to 3**
+   once that region is hot. Heat is empty on the first pass, so the ordering is then identical to the
+   old tier order — no behaviour change until there is something to learn (asserted by a test).
+2. **Nothing was learned from failure.** All 13 techniques were re-queued on every full pass even if
+   one had never worked here. `tech_stats` now counts tries/reaches per technique (recorded via
+   `state._last_tech`, set when a technique candidate is handed out); a technique with
+   `tech_min_trials` (25) attempts and zero reaches is dropped for the rest of the search. A
+   technique with no verdict yet is always kept, so nothing is judged before a fair trial.
+
+One subtlety worth keeping: the technique stride is computed from the FULL table, not from the
+survivors. Striding by the survivors kept the queue pegged at `TECH_MAX_ENTRIES` — dropping a dead
+technique just handed its slots to the others at finer granularity and saved nothing. Measured with
+the fix: 1194 → **691** with 8 of 13 dropped, → **503** with 11. Tests: 386 passed (9 new).
+
+### Speed, round 2: the checkpoint ladder is back, as a FILTER (2026-07-25, user-reported)
+
+"Il faut trouver un moyen que ça aille beaucoup plus vite." The dominant cost is that every candidate
+replays ~190 frames from the START, when most mutations only change the END — replaying the first 150
+frames identically every time is pure waste. That is exactly what the checkpoint ladder was for, and
+it had been disabled (`USE_CHECKPOINTS = false`).
+
+**Found the actual bug that got it disabled.** In `cksave`: when the replay reaches the target frame,
+the code requests the (async) savestate AND returns a neutral input for that frame. That neutral frame
+is applied, so the rung is taken a frame late AND contaminated by an input that is not part of the
+run. It never represented "the state after N frames of the best" — which is precisely the reported
+"a savestate taken mid-run can be a frame out of alignment". Checkpoints were not a bad idea; they
+were broken, and were switched off instead of fixed.
+
+Re-enabled with the measurement problem designed out rather than trusted away: **a checkpoint run is
+only a filter.** A candidate replayed from a rung that appears to reach is re-run IN FULL from the
+true start, and only that second measurement is reported. So a misaligned rung can cost a candidate
+(a false rejection) but can never produce an unreproducible result — the failure mode that forced the
+feature off. Most candidates never reach, so most still cost only the cheap suffix.
+
+Two supporting changes:
+
+- **The ladder is deeper**: ½, ¾ and now ⅞ (`MIN_CK_GAP` 4 keeps rungs from being packed closer than
+  they are worth). The deterministic sweep is END-FIRST, so most candidates land past the deepest
+  rung: on a 189-frame segment the rungs are 94 / 141 / 165, and a candidate touching only the tail
+  replays **24 frames instead of 189**.
+- **A self-check against broken rungs.** Misalignment would make every suffix replay fail, silently
+  rejecting everything — worse than not using checkpoints at all. After `CK_TRUST_SAMPLE` (40)
+  filtered runs with zero reaches while full runs demonstrably do reach, the driver sets `ck_broken`,
+  drops the rungs and finishes at full length. Worst case is therefore today's behaviour, not a
+  broken search.
+
+Driver-only: NOT unit-testable off mupen (377 core tests still pass, unchanged). The honest estimate
+is a large win on suffix-heavy work and none on candidates that touch early frames; the real figure
+has to come from mupen.
+
+### Speed: stop re-sweeping the techniques after every improvement (2026-07-25, user-reported)
+
+With everything above working in mupen, the remaining complaint was wall-clock: "la vitesse c'est
+assez lent". The cause was a direct consequence of the technique work: the sweep re-anchors on every
+new best, so the cost was `improvements x whole queue` — and the queue is now 1194 entries on a
+189-frame segment, each a full ~190-frame emulator replay (~230k emulated frames per pass, rebuilt
+every time the best improved).
+
+The technique tier is what dominates that (817 of the 1194) and is also the tier least worth
+repeating: right after an improvement it is the cheap tiers (removals, button retimings) that pay off,
+because the input list just changed under them. So techniques are now swept in full on the FIRST pass
+and then only every `tech_every` (default 4) rebuilds; the cheap tiers still run every time.
+
+Measured on a 189-frame segment: 1194 for the first pass, then ~375 per improvement instead of 1194.
+Over five improvements that is 3482 replays instead of 5970 (**1.7x**), and ~2x in steady state.
+Better than that in practice, since the dedupe skips already-tried lists without replaying them at
+all. `tech_every = 1` restores the old exhaustive-every-time behaviour. Nothing is lost permanently —
+a technique skipped on one rebuild is swept again on the next full pass. Tests: 377 passed (9 new).
+
+Other speed levers were already at their ceiling: UltraFastForward is the fastest core mode, the
+early-abort cutoff is `best + 2`, candidates are deduped, and the GUI is throttled to 4 fps during a
+search. The remaining big one is the checkpoint ladder (~2x), still disabled (`USE_CHECKPOINTS =
+false`) because it produced unreproducible gains.
+
+### The goal radius is now AUTOMATIC (2026-07-25, user choice)
+
+After the revert above the applied result still did not finish the action, with `ends from goal: 14`
+on a radius of 50 — so the goal was still accepting Mario short of the target. The radius was a fixed
+50 the user had to guess, and it is not guessable: the only scale that means anything is **how far
+Mario travels in one frame**. Below that he steps over the goal without ever being sampled inside it
+(never reached); far above it the goal fires while he is merely PASSING, several frames early, which
+inflates the gain by that slack and truncates the applied sheet.
+
+`Bruteforce.auto_goal_radius(states, n)` (pure, tested) takes the fastest per-frame travel over the
+last few frames of the capture and returns `1.5x` it, clamped to `[5, 150]` — the clamp keeps a
+stopped Mario matchable and stops a teleport/glitch frame from blowing it up. `goal_radius = 0` (the
+new default) means automatic; any positive value stays an explicit override. Resolved once at the end
+of the capture into `BruteforceDriver.goal_radius`, and shown in the status row as `radius:` — an
+automatic value the user cannot see is one they cannot trust.
+
+Note the old label "0 = action only" was wrong: radius 0 went straight into `state_matches_goal`,
+where it demands an EXACT position match, so it never reached the goal. That made 0 free to reuse.
+
+Existing presets keep whatever radius they saved (`ensure_settings` only fills nils), so set the
+spinner to 0 to get the automatic behaviour on an existing preset. Tests: 368 passed (10 new).
+
+### Technique library expanded (2026-07-25, user request)
+
+Since technique injection turned out to be the operator that actually unlocks additive gains, the
+library went from 5 to 13 entries: jump, double jump, long jump (`Z+A`), `Z` then `Z+A`, long-jump
+dive, backflip, dive (`A,B`), late dive (`A,_,B`), ground dive (`B`), dive recover (`B,_,_,_,A`),
+slide kick (`Z+B`), crouch slide (`Z`), ground pound (`A,_,Z`).
+
+`TECH_MAX_ENTRIES` was raised 400 → 900 at the same time, and that pairing matters: the cap is shared
+across the WHOLE table, so adding techniques without raising it silently buys variety by giving up
+position granularity — and a technique landed a few frames off usually just fails. At 13 techniques
+on a 189-frame segment the queue is 1194 entries (817 technique + 189 removal + 188 pair removal),
+each technique tried every 3rd frame, against a 2000 budget / 4000 hard cap.
+
+New tests assert the library is well-formed (every entry named, non-empty, only A/B/Z, actually
+presses something) — the stamps are applied blindly, so a typo would silently produce no-op
+candidates. Tests: 358 passed.
+
 ## Removed (2026-07-24, user decision): the "Bruteforce ALL" pipeline
 
 The overnight all-sheets pipeline (Round 8) was **removed** at the user's request. Their reasoning:

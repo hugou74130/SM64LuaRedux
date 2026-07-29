@@ -1357,6 +1357,69 @@ do
         convergence_after = 500, pulse_after = 30 }
     check('legacy core: nil baseline_reached treated as valid -> gain reported',
         Bruteforce.summary(synthetic).gain == 6)
+    check('legacy core: missing reaches counter reported as 0',
+        Bruteforce.summary(synthetic).reaches == 0)
+end
+
+-- summary diagnostics: `reaches` separates "the goal is never reproduced" from "reached but nothing
+-- shorter was accepted". Both show best == baseline and gain 0, so the frame counts alone cannot tell
+-- them apart — and they need opposite fixes.
+do
+    local st = Bruteforce.new({ baseline = make_baseline(20), baseline_frames = 20, max_frames = 20,
+        budget = 100, rng = make_rng(77) })
+    check('diag: reaches starts at 0', Bruteforce.summary(st).reaches == 0)
+    check('diag: baseline_reached unset before the first result',
+        Bruteforce.summary(st).baseline_reached == nil)
+
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, make_baseline(20), 20, false, 200) -- baseline misses the goal
+    check('diag: a missed baseline does not count as a reach', Bruteforce.summary(st).reaches == 0)
+    check('diag: baseline_reached exposed as false', Bruteforce.summary(st).baseline_reached == false)
+
+    -- non-reaching candidates never bump the counter
+    Bruteforce.report_result(st, make_baseline(19), 19, false, 150)
+    check('diag: non-reaching candidates do not count', Bruteforce.summary(st).reaches == 0)
+
+    -- reaching ones do
+    Bruteforce.report_result(st, make_baseline(14), 14, true, nil, { action = 1, x = 0, z = 0, hspeed = 5 })
+    check('diag: a reaching candidate is counted', Bruteforce.summary(st).reaches == 1)
+    Bruteforce.report_result(st, make_baseline(13), 13, true, nil, { action = 1, x = 0, z = 0, hspeed = 5 })
+    check('diag: reaches accumulate', Bruteforce.summary(st).reaches == 2)
+
+    -- the "healthy" case: baseline reaches, so it is counted too
+    local ok = Bruteforce.new({ baseline = make_baseline(20), baseline_frames = 20, max_frames = 20,
+        budget = 100, rng = make_rng(78) })
+    Bruteforce.next_candidate(ok)
+    Bruteforce.report_result(ok, make_baseline(18), 18, true)
+    check('diag: a reaching baseline counts as a reach', Bruteforce.summary(ok).reaches == 1)
+    check('diag: baseline_reached exposed as true', Bruteforce.summary(ok).baseline_reached == true)
+end
+
+-- sweep_queued / closest_miss: distinguishes "the deterministic sweep had nothing to try" (search is
+-- running on random mutation alone) from "it tried everything and none of it worked", and says how
+-- far the failing candidates actually land from the goal.
+do
+    local base = make_baseline(10)
+    local st = Bruteforce.new({ baseline = base, baseline_frames = 10, max_frames = 10,
+        budget = 200, rng = make_rng(909) })
+    check('diag: no sweep queued before a best exists', Bruteforce.summary(st).sweep_queued == 0)
+    check('diag: closest_miss unset before any miss', Bruteforce.summary(st).closest_miss == nil)
+
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, base, 10, true) -- baseline reaches -> seeds the beam
+    Bruteforce._next_sweep_candidate(st)         -- forces the queue to build
+    local s = Bruteforce.summary(st)
+    check('diag: sweep queue is non-empty once a best exists', s.sweep_queued > 0)
+    check('diag: sweep_done counts drained entries', s.sweep_done >= 1)
+    check('diag: sweep_done never exceeds sweep_queued', s.sweep_done <= s.sweep_queued)
+
+    -- misses record their distance; the smallest one is kept
+    Bruteforce.report_result(st, base, 10, false, 300)
+    check('diag: first miss recorded', Bruteforce.summary(st).closest_miss == 300)
+    Bruteforce.report_result(st, base, 10, false, 42)
+    check('diag: closer miss replaces it', Bruteforce.summary(st).closest_miss == 42)
+    Bruteforce.report_result(st, base, 10, false, 900)
+    check('diag: a worse miss does not replace it', Bruteforce.summary(st).closest_miss == 42)
 end
 
 -- angle_diff: shortest u16 angular distance with wraparound
@@ -1388,7 +1451,8 @@ do
     check('match: speed within tol accepted',
         Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 30.5, yaw = 16384 },
             goal, 50, 1.0, 256) == true)
-    check('match: speed outside tol rejected (would desync the next sheet)',
+    -- legacy 5-arg form stays SYMMETRIC (no speed_tol_up), so existing callers are unaffected
+    check('match: speed outside tol rejected (symmetric legacy form)',
         Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 45, yaw = 16384 },
             goal, 50, 1.0, 256) == false)
 
@@ -1408,6 +1472,547 @@ do
     check('match: action-only goal (no position) accepts any position',
         Bruteforce.state_matches_goal({ action = 5, x = 9999, y = 0, z = 9999 },
             { action = 5 }, nil, nil, nil) == true)
+end
+
+-- Asymmetric speed acceptance: arriving FASTER than the baseline is what a genuine frame-saving looks
+-- like and must be accepted; arriving SLOWER stays tightly bounded (that is the real desync risk).
+-- A symmetric tolerance here is what made searches converge instantly on a ~1-frame gain.
+do
+    local goal = { action = 5, x = 100, y = 0, z = 200, h_speed = 30, yaw = 16384 }
+    local function at_speed(s)
+        return { action = 5, x = 100, y = 0, z = 200, h_speed = s, yaw = 16384 }
+    end
+    -- speed_tol = 1.0 (slower side), speed_tol_up = 8.0 (faster side)
+    local function match(s) return Bruteforce.state_matches_goal(at_speed(s), goal, 50, 1.0, 256, 8.0) end
+
+    check('asym: much faster arrival accepted (the real frame-saving case)', match(38) == true)
+    check('asym: slightly faster accepted', match(31) == true)
+    check('asym: exactly at the fast bound accepted', match(38.0) == true)
+    check('asym: absurdly faster still rejected (different route, not a tightened line)', match(60) == false)
+    check('asym: just past the fast bound rejected', match(38.01) == false)
+
+    -- the slow side stays as tight as before: a worse handoff state is still refused
+    check('asym: slightly slower accepted (within speed_tol)', match(29.5) == true)
+    check('asym: exactly at the slow bound accepted', match(29.0) == true)
+    check('asym: meaningfully slower rejected', match(28) == false)
+    check('asym: much slower rejected', match(15) == false)
+
+    -- speed_tol_up must not leak into the other checks
+    check('asym: faster but wrong action still rejected',
+        Bruteforce.state_matches_goal({ action = 6, x = 100, y = 0, z = 200, h_speed = 38, yaw = 16384 },
+            goal, 50, 1.0, 256, 8.0) == false)
+    check('asym: faster but out of position still rejected',
+        Bruteforce.state_matches_goal({ action = 5, x = 300, y = 0, z = 200, h_speed = 38, yaw = 16384 },
+            goal, 50, 1.0, 256, 8.0) == false)
+    check('asym: faster but turned the wrong way still rejected',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 38, yaw = 16384 + 4000 },
+            goal, 50, 1.0, 256, 8.0) == false)
+
+    -- explicit nil keeps the legacy symmetric meaning
+    check('asym: nil speed_tol_up falls back to symmetric',
+        Bruteforce.state_matches_goal(at_speed(38), goal, 50, 1.0, 256, nil) == false)
+
+    -- math.huge = "no upper bound at all". The driver relies on this when nothing downstream depends
+    -- on the segment's end state, so any faster arrival is acceptable.
+    check('asym: math.huge accepts any faster arrival',
+        Bruteforce.state_matches_goal(at_speed(9999), goal, 50, 1.0, 256, math.huge) == true)
+    check('asym: math.huge still enforces the slow bound',
+        Bruteforce.state_matches_goal(at_speed(20), goal, 50, 1.0, 256, math.huge) == false)
+
+    -- nil angle_tol = the facing angle is not constrained (the unchained case), while position/action
+    -- and the slow-speed bound still hold.
+    check('unchained: nil angle_tol ignores facing entirely',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 38, yaw = 40000 },
+            goal, 50, 1.0, nil, math.huge) == true)
+    check('unchained: nil angle_tol still rejects a slower arrival',
+        Bruteforce.state_matches_goal({ action = 5, x = 100, y = 0, z = 200, h_speed = 10, yaw = 40000 },
+            goal, 50, 1.0, nil, math.huge) == false)
+    check('unchained: nil angle_tol still rejects a wrong position',
+        Bruteforce.state_matches_goal({ action = 5, x = 400, y = 0, z = 200, h_speed = 38, yaw = 40000 },
+            goal, 50, 1.0, nil, math.huge) == false)
+end
+
+-- frames_near_equal: a Semantic Workflow baseline recomputes the stick every frame through the live
+-- camera, so a held direction jitters by a unit or two instead of repeating exactly. Exact equality
+-- therefore finds almost nothing to remove on sheet-derived inputs.
+do
+    local near = Bruteforce._frames_near_equal
+    check('near: identical frames are near-equal', near({ X = 40, Y = 10 }, { X = 40, Y = 10 }, 3) == true)
+    check('near: small jitter is near-equal', near({ X = 40, Y = 10 }, { X = 42, Y = 9 }, 3) == true)
+    check('near: jitter exactly at tolerance is near-equal', near({ X = 40, Y = 10 }, { X = 43, Y = 13 }, 3) == true)
+    check('near: jitter past tolerance is not', near({ X = 40, Y = 10 }, { X = 44, Y = 10 }, 3) == false)
+    check('near: Y past tolerance is not', near({ X = 40, Y = 10 }, { X = 40, Y = 20 }, 3) == false)
+    check('near: differing buttons are never near-equal',
+        near({ X = 40, Y = 10, A = true }, { X = 40, Y = 10 }, 3) == false)
+    check('near: zero tolerance behaves like exact equality',
+        near({ X = 40, Y = 10 }, { X = 41, Y = 10 }, 0) == false)
+end
+
+-- The removal sweep must be EXHAUSTIVE over single frames. A walking baseline (no neutral frames, no
+-- exact duplicates, no A/B/Z edges) previously produced an essentially empty deterministic queue, so
+-- the search had no guaranteed frame-saving candidates at all — the "converges instantly with no gain
+-- on a deliberately sloppy action" case.
+do
+    -- a stick-driven baseline: every frame differs slightly, no buttons at all
+    local jittery = {}
+    for i = 1, 12 do jittery[i] = { X = 60 + (i % 5) * 7, Y = 20 - (i % 3) * 9 } end
+
+    local st = Bruteforce.new({ baseline = jittery, baseline_frames = #jittery, max_frames = #jittery,
+        budget = 500, rng = make_rng(4242) })
+    Bruteforce.next_candidate(st)                                  -- baseline
+    Bruteforce.report_result(st, jittery, #jittery, true)           -- reaches -> seeds the beam
+
+    -- Drain the deterministic queue and work out which frame index each candidate drops. Candidates
+    -- are padded back up to the timeout length, so a removal is identified by the SHIFT it causes
+    -- (everything from the dropped index on moves one frame earlier), not by a shorter list.
+    local removed = {}
+    local total = 0
+    for _ = 1, 200 do
+        local cand = Bruteforce._next_sweep_candidate(st)
+        if cand == nil then break end
+        total = total + 1
+        for i = 1, #jittery do
+            local c = cand[i]
+            if c == nil or c.X ~= jittery[i].X or c.Y ~= jittery[i].Y then
+                -- first divergence: a removal of index i leaves cand[i] holding the ORIGINAL frame i+1
+                local nxt = jittery[i + 1]
+                if nxt ~= nil and c ~= nil and c.X == nxt.X and c.Y == nxt.Y then
+                    removed[i] = true
+                elseif i == #jittery then
+                    removed[i] = true -- dropping the last frame: the tail becomes padding
+                end
+                break
+            end
+        end
+    end
+
+    local count = 0
+    for _ in pairs(removed) do count = count + 1 end
+    check('sweep: a jittery button-less baseline still produces removal candidates', count > 0)
+    check('sweep: every single frame is tried for removal (exhaustive)', count == #jittery)
+    check('sweep: the queue is drained rather than empty', total >= #jittery)
+end
+
+-- Technique injection: the only operator that can ADD a movement the baseline does not contain.
+-- Without it a segment that walks a distance it should have dived/long-jumped is unimprovable —
+-- removals cannot add anything, and a plain walk has no button edges to retime.
+do
+    -- a button-less walking baseline, exactly the case that used to be unimprovable
+    local walk = {}
+    for i = 1, 15 do walk[i] = { X = 70, Y = 5 } end
+
+    local st = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 5000, rng = make_rng(31337) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, walk, #walk, true) -- baseline reaches -> seeds the beam
+
+    local saw = {}
+    local stick_kept = true
+    for _ = 1, 6000 do
+        local cand = Bruteforce._next_sweep_candidate(st)
+        if cand == nil then break end
+        for i = 1, #cand do
+            local f, nxt = cand[i], cand[i + 1]
+            if f.A then saw.A = true end
+            if f.Z then saw.Z = true end
+            if f.B then saw.B = true end
+            if f.Z and f.A then saw.ZA = true end
+            if f.Z and f.B then saw.ZB = true end            -- slide kick
+            if f.A and nxt ~= nil and nxt.B then saw.AB = true end -- dive
+            -- techniques must never disturb the stick: Mario keeps heading where he was heading
+            if f.X ~= nil and f.X ~= 70 and f.X ~= 0 then stick_kept = false end
+        end
+    end
+
+    check('tech: a jump (A) is proposed on a button-less walk', saw.A == true)
+    check('tech: a long jump (Z+A same frame) is proposed', saw.ZA == true)
+    check('tech: Z is proposed (crouch slide / backflip setup)', saw.Z == true)
+    check('tech: B is proposed (dive)', saw.B == true)
+    check('tech: a dive pattern (A then B) is proposed', saw.AB == true)
+    check('tech: a slide kick (Z+B same frame) is proposed', saw.ZB == true)
+    check('tech: the stick is never disturbed by a technique stamp', stick_kept)
+end
+
+-- Every technique in the library must be well-formed: the search stamps them blindly, so a typo
+-- (an unknown button, an empty stamp) would silently produce candidates that do nothing.
+do
+    local valid = { A = true, B = true, Z = true }
+    local all_named, all_stamped, all_known_buttons, any_effective = true, true, true, true
+    for _, tech in ipairs(Bruteforce._TECHNIQUES) do
+        if type(tech.name) ~= 'string' or tech.name == '' then all_named = false end
+        if type(tech.stamp) ~= 'table' or #tech.stamp == 0 then all_stamped = false end
+        local presses = 0
+        for _, frame in ipairs(tech.stamp or {}) do
+            for btn in pairs(frame) do
+                if not valid[btn] then all_known_buttons = false end
+                presses = presses + 1
+            end
+        end
+        if presses == 0 then any_effective = false end -- a stamp that presses nothing is a no-op
+    end
+    check('tech lib: every technique is named', all_named)
+    check('tech lib: every technique has a non-empty stamp', all_stamped)
+    check('tech lib: techniques only use A/B/Z', all_known_buttons)
+    check('tech lib: every technique actually presses something', any_effective)
+    check('tech lib: the library is worth sweeping (several techniques)', #Bruteforce._TECHNIQUES >= 5)
+end
+
+-- The technique tier is the expensive one (hundreds of full emulator replays). Re-running it after
+-- EVERY improvement made long searches drag — cost was (improvements x whole queue). It must be swept
+-- in full on the first pass, then only every `tech_every` rebuilds, while the cheap tiers (removals,
+-- button retimings) keep running every time.
+do
+    local walk = {}
+    for i = 1, 30 do walk[i] = { X = 70, Y = 5 } end
+
+    local function kinds_of(st)
+        local k = {}
+        for _, e in ipairs(st.sweep_queue) do k[e.kind] = (k[e.kind] or 0) + 1 end
+        return k
+    end
+    -- forces the queue to re-anchor, as a new best does
+    local function force_rebuild(st, frames)
+        st.best_frames = frames
+        st.best_list = st.best_list
+        st.sweep_base = nil
+        Bruteforce._next_sweep_candidate(st)
+        return kinds_of(st)
+    end
+
+    local st = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, tech_every = 4, rng = make_rng(555) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, walk, #walk, true)
+
+    Bruteforce._next_sweep_candidate(st)
+    local first = kinds_of(st)
+    check('tech_every: the FIRST pass sweeps techniques in full', (first.tech or 0) > 0)
+    check('tech_every: the first pass also queues removals', (first.remove or 0) > 0)
+
+    local second = force_rebuild(st, 29)
+    check('tech_every: the next rebuild skips techniques', (second.tech or 0) == 0)
+    check('tech_every: but still re-queues the cheap removals', (second.remove or 0) > 0)
+    check('tech_every: skipping techniques really shrinks the queue',
+        #st.sweep_queue < (first.tech or 0))
+
+    force_rebuild(st, 28)
+    local fourth = force_rebuild(st, 27)
+    check('tech_every: techniques stay skipped in between', (fourth.tech or 0) == 0)
+
+    local fifth = force_rebuild(st, 26)
+    check('tech_every: techniques come back on the 4th rebuild', (fifth.tech or 0) > 0)
+
+    -- tech_every = 1 restores the old exhaustive-every-time behaviour
+    local always = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, tech_every = 1, rng = make_rng(556) })
+    Bruteforce.next_candidate(always)
+    Bruteforce.report_result(always, walk, #walk, true)
+    Bruteforce._next_sweep_candidate(always)
+    check('tech_every=1: techniques on the first pass', (kinds_of(always).tech or 0) > 0)
+    check('tech_every=1: techniques on every rebuild too',
+        (force_rebuild(always, 29).tech or 0) > 0)
+end
+
+-- AIM sweep: the only deterministic operator that changes stick DIRECTION. Removals delete frames,
+-- retimings move buttons and technique stamps add buttons — all leave the stick alone. So a segment
+-- that is slow because Mario travels a curve he should have travelled straight had no systematic
+-- candidate at all (the aim operator existed only as an 8% chance inside the random path, which
+-- barely runs once the deterministic queue is large). Field case: 474/801 reaching, queue fully
+-- drained, gain 0.
+do
+    local curve = {}
+    local aims = {}
+    for i = 1, 40 do
+        curve[i] = { X = 20, Y = 20 }        -- a weak, badly-angled stick
+        aims[i] = { x = 1, y = 0 }           -- the goal is straight along +X
+    end
+
+    local st = Bruteforce.new({ baseline = curve, baseline_frames = #curve, max_frames = #curve,
+        budget = 9000, aims = aims, rng = make_rng(4242) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, curve, #curve, true)
+    st.sweep_base = nil
+    Bruteforce._next_sweep_candidate(st)
+
+    local aim_entries, lens = 0, {}
+    for _, e in ipairs(st.sweep_queue) do
+        if e.kind == 'aim' then
+            aim_entries = aim_entries + 1
+            lens[e.len] = true
+        end
+    end
+    check('aim: the sweep queues aim candidates', aim_entries > 0)
+    check('aim: several window lengths are offered', (lens[8] and lens[16]) == true)
+
+    -- drain and confirm a candidate actually re-points the stick at the goal without touching buttons
+    local repointed, buttons_kept = false, true
+    for _ = 1, 3000 do
+        local cand = Bruteforce._next_sweep_candidate(st)
+        if cand == nil then break end
+        for i = 1, #cand do
+            if cand[i].X == 127 and cand[i].Y == 0 then repointed = true end
+            if cand[i].A or cand[i].B or cand[i].Z then
+                -- only the technique tier may add buttons; aim candidates must not
+                if cand[i].X == 127 and cand[i].Y == 0 and not curve[i].A then buttons_kept = false end
+            end
+        end
+    end
+    check('aim: a candidate snaps the stick to full deflection toward the goal', repointed)
+    check('aim: aim candidates leave the buttons alone', buttons_kept)
+
+    -- no aims (action-only goal, or no usable signal) must simply skip the tier, not error
+    local blind = Bruteforce.new({ baseline = curve, baseline_frames = #curve, max_frames = #curve,
+        budget = 9000, rng = make_rng(7) })
+    Bruteforce.next_candidate(blind)
+    Bruteforce.report_result(blind, curve, #curve, true)
+    blind.sweep_base = nil
+    Bruteforce._next_sweep_candidate(blind)
+    local none = true
+    for _, e in ipairs(blind.sweep_queue) do if e.kind == 'aim' then none = false end end
+    check('aim: no aims available -> the tier is skipped cleanly', none)
+
+    -- the tier must stay bounded on a long segment
+    local long = {}
+    local long_aims = {}
+    for i = 1, 2000 do long[i] = { X = 20, Y = 20 }; long_aims[i] = { x = 1, y = 0 } end
+    local big = Bruteforce.new({ baseline = long, baseline_frames = #long, max_frames = #long,
+        budget = 9000, aims = long_aims, rng = make_rng(8) })
+    Bruteforce.next_candidate(big)
+    Bruteforce.report_result(big, long, #long, true)
+    big.sweep_base = nil
+    Bruteforce._next_sweep_candidate(big)
+    local big_aims = 0
+    for _, e in ipairs(big.sweep_queue) do if e.kind == 'aim' then big_aims = big_aims + 1 end end
+    check('aim: the tier stays bounded on a long segment', big_aims > 0 and big_aims <= 400)
+end
+
+-- Ordering by expected value: the queue is drained best-first, not tier-first. `heat` records which
+-- frames past improvements came from, so once something has paid off the sweep concentrates there
+-- instead of grinding end-first through hundreds of already-failed candidates. This matters doubly
+-- because the queue is REBUILT on every improvement — the cost of each gain is paid again each time.
+do
+    local walk = {}
+    for i = 1, 40 do walk[i] = { X = 70, Y = 5 } end
+
+    local function build(st)
+        st.sweep_base = nil
+        Bruteforce._next_sweep_candidate(st)
+        return st.sweep_queue
+    end
+
+    -- with no heat (the first pass) the order must be exactly the old tier order: high-prior
+    -- removals first, the speculative exhaustive tier last
+    local cold = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, rng = make_rng(11) })
+    Bruteforce.next_candidate(cold)
+    Bruteforce.report_result(cold, walk, #walk, true)
+    local q = build(cold)
+    local priors_descend = true
+    for i = 2, #q do
+        if (q[i].prior or 0) > (q[i - 1].prior or 0) then priors_descend = false end
+    end
+    check('order: with no heat the queue stays in tier (prior) order', priors_descend)
+
+    -- now credit heat to one specific frame: entries touching it must rise to the front
+    local hot = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, rng = make_rng(12) })
+    Bruteforce.next_candidate(hot)
+    Bruteforce.report_result(hot, walk, #walk, true)
+    hot.heat = { [7] = 50 } -- frame 7 has paid off before
+    local hq = build(hot)
+    check('order: a hot frame is pulled to the very front', hq[1].frame == 7)
+    check('order: the hot entry is still a real entry', hq[1].kind ~= nil)
+
+    -- heat must not promote an entry whose tier is worthless by more than its prior warrants:
+    -- the ordering is prior x heat, so a cold high-prior entry still beats a barely-warm low one
+    local mild = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, rng = make_rng(13) })
+    Bruteforce.next_candidate(mild)
+    Bruteforce.report_result(mild, walk, #walk, true)
+    mild.heat = { [9] = 0.01 }
+    local mq = build(mild)
+    check('order: a barely-warm low-prior entry does not jump the high-prior tier',
+        (mq[1].prior or 0) >= 2.0)
+end
+
+-- Learning from failure: a technique that never reproduces the goal on THIS segment is dropped from
+-- later sweeps instead of re-queueing its ~60 candidates on every full pass.
+do
+    local walk = {}
+    for i = 1, 40 do walk[i] = { X = 70, Y = 5 } end
+    local st = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, tech_every = 1, tech_min_trials = 5, rng = make_rng(77) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, walk, #walk, true)
+
+    local function tech_ids(state)
+        state.sweep_base = nil
+        Bruteforce._next_sweep_candidate(state)
+        local ids = {}
+        for _, e in ipairs(state.sweep_queue) do
+            if e.kind == 'tech' then ids[e.tech] = true end
+        end
+        return ids
+    end
+
+    local before = tech_ids(st)
+    check('learn: every technique is queued before any verdict', before[1] and before[2])
+
+    -- technique 1 fails its trials; technique 2 succeeds once
+    st.tech_stats[1] = { tries = 5, reaches = 0 }
+    st.tech_stats[2] = { tries = 5, reaches = 1 }
+    local after = tech_ids(st)
+    check('learn: a technique that never reached is dropped', after[1] == nil)
+    check('learn: a technique that reached at least once is kept', after[2] == true)
+
+    -- a technique still under its trial quota is never judged early
+    st.tech_stats[3] = { tries = 4, reaches = 0 }
+    check('learn: an under-trialled technique is still given its chance', tech_ids(st)[3] == true)
+
+    -- and the stats are actually recorded by report_result, not just readable
+    local rec = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 9000, tech_every = 1, rng = make_rng(78) })
+    Bruteforce.next_candidate(rec)
+    Bruteforce.report_result(rec, walk, #walk, true)
+    for _ = 1, 60 do
+        local cand = Bruteforce.next_candidate(rec)
+        if cand == nil then break end
+        Bruteforce.report_result(rec, cand, #walk, false, 100)
+    end
+    local recorded = false
+    for _, s in pairs(rec.tech_stats) do if s.tries > 0 then recorded = true end end
+    check('learn: technique attempts are recorded as they are tried', recorded)
+end
+
+-- the technique queue must stay bounded on a long segment (it must not eat the whole budget)
+do
+    local long_walk = {}
+    for i = 1, 2000 do long_walk[i] = { X = 70, Y = 5 } end
+    local st = Bruteforce.new({ baseline = long_walk, baseline_frames = #long_walk,
+        max_frames = #long_walk, budget = 5000, rng = make_rng(4) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, long_walk, #long_walk, true)
+    Bruteforce._next_sweep_candidate(st)
+
+    local tech_entries = 0
+    for _, e in ipairs(st.sweep_queue) do
+        if e.kind == 'tech' then tech_entries = tech_entries + 1 end
+    end
+    check('tech: entries are queued even on a long segment', tech_entries > 0)
+    -- The point is that the count is STRIDED, not that it equals a particular cap: unbounded it would
+    -- be #frames * #techniques (2000 * 13 = 26000 here), which would swallow any budget whole.
+    local unbounded = #long_walk * #Bruteforce._TECHNIQUES
+    check('tech: entries stay bounded on a long segment (strided)', tech_entries <= 1000)
+    check('tech: the bound is a real reduction vs one entry per frame per technique',
+        tech_entries < unbounded / 10)
+end
+
+-- Convergence must not fire while deterministic candidates are still queued: the sweep now holds more
+-- entries than convergence_after, so stopping mid-queue would skip systematic work AND claim "likely
+-- optimal" about a search that never finished checking.
+do
+    local walk = {}
+    for i = 1, 40 do walk[i] = { X = 70, Y = 5 } end
+    local st = Bruteforce.new({ baseline = walk, baseline_frames = #walk, max_frames = #walk,
+        budget = 40, convergence_after = 3, rng = make_rng(8) })
+    Bruteforce.next_candidate(st)
+    Bruteforce.report_result(st, walk, #walk, true)
+    Bruteforce._next_sweep_candidate(st) -- build the queue
+
+    st.stagnation = 999 -- way past convergence_after
+    check('done: does not converge while the sweep queue still has entries',
+        Bruteforce.done(st) == false)
+
+    st.sweep_pos = #st.sweep_queue + 1 -- queue drained
+    check('done: converges once the sweep queue is drained', Bruteforce.done(st) == true)
+
+    -- the hard cap must still stop a runaway search even mid-queue
+    st.sweep_pos = 1
+    st.tried = st.hard_cap
+    check('done: the hard cap still stops a run with a pending queue', Bruteforce.done(st) == true)
+end
+
+-- auto_goal_radius: derives the goal tolerance from Mario's real per-frame travel, so it is never a
+-- number the user has to guess. Too small and he steps over the goal without ever being measured
+-- inside it; too large and the goal fires while he is merely passing, inflating the gain by that
+-- slack and truncating the applied result. Both failures were observed in mupen.
+do
+    -- walking straight at 20 units/frame
+    local walk = {}
+    for i = 0, 10 do walk[i] = { x = i * 20, y = 0, z = 0 } end
+    local r = Bruteforce.auto_goal_radius(walk, 10)
+    check('auto radius: scales with per-frame travel (20 * 1.5)', math.abs(r - 30) < 0.001)
+    check('auto radius: is at least one frame of travel (catchable)', r >= 20)
+
+    -- faster movement -> proportionally larger radius
+    local fast = {}
+    for i = 0, 10 do fast[i] = { x = i * 60, y = 0, z = 0 } end
+    check('auto radius: a faster segment gets a larger radius',
+        Bruteforce.auto_goal_radius(fast, 10) > r)
+
+    -- a stopped Mario still gets a usable (floored) tolerance rather than 0
+    local stopped = {}
+    for i = 0, 10 do stopped[i] = { x = 500, y = 0, z = 0 } end
+    check('auto radius: a stopped goal is floored, not zero',
+        Bruteforce.auto_goal_radius(stopped, 10) == 5)
+
+    -- it looks at the frames NEAR the goal, not the whole run: a fast start then a stop stays tight
+    local decel = { [0] = { x = 0, y = 0, z = 0 } }
+    for i = 1, 7 do decel[i] = { x = i * 90, y = 0, z = 0 } end
+    for i = 8, 10 do decel[i] = { x = 7 * 90, y = 0, z = 0 } end -- stopped for the last 3 frames
+    check('auto radius: uses the frames near the goal, not the fastest of the whole run',
+        Bruteforce.auto_goal_radius(decel, 10) == 5)
+
+    -- a teleport/glitch frame cannot blow the radius up past the cap
+    local warp = { [0] = { x = 0, y = 0, z = 0 }, [1] = { x = 100000, y = 0, z = 0 } }
+    check('auto radius: capped against a teleport frame', Bruteforce.auto_goal_radius(warp, 1) == 150)
+
+    -- 3D distance, not just x
+    local diag = { [0] = { x = 0, y = 0, z = 0 }, [1] = { x = 3, y = 0, z = 4 } } -- travel 5
+    check('auto radius: uses full 3D distance', math.abs(Bruteforce.auto_goal_radius(diag, 1) - 7.5) < 0.001)
+
+    -- defensive: missing data yields nil so the caller can fall back
+    check('auto radius: nil states -> nil', Bruteforce.auto_goal_radius(nil, 5) == nil)
+    check('auto radius: n < 1 -> nil', Bruteforce.auto_goal_radius(walk, 0) == nil)
+    check('auto radius: gaps in the state table -> nil', Bruteforce.auto_goal_radius({}, 3) == nil)
+end
+
+-- has_dependents: decides whether the search must stay chain-safe at all. Getting this wrong either
+-- silently throws away gains (false positive) or desyncs the user's TAS (false negative).
+do
+    local a = { name = 'a' }
+    local b = { name = 'b', _base_sheet = a }
+    local c = { name = 'c', _base_sheet = b }
+    local loose = { name = 'loose' }
+    local all = { a, b, c, loose }
+
+    check('deps: sheet with a direct dependent -> locked', Bruteforce.has_dependents(all, a) == true)
+    check('deps: sheet with a transitive dependent only -> locked', Bruteforce.has_dependents({ a, c }, a) == true)
+    check('deps: last sheet of the chain -> free', Bruteforce.has_dependents(all, c) == false)
+    check('deps: middle sheet -> locked', Bruteforce.has_dependents(all, b) == true)
+    check('deps: standalone sheet -> free', Bruteforce.has_dependents(all, loose) == false)
+
+    -- the normal workflow: bruteforce the newest sheet, which nothing chains off yet
+    check('deps: newest sheet in a linear project -> free',
+        Bruteforce.has_dependents({ a, b, c }, c) == false)
+    -- a sheet must not count as its own dependent
+    check('deps: single-sheet project -> free', Bruteforce.has_dependents({ a }, a) == false)
+    check('deps: self-based sheet does not lock itself',
+        Bruteforce.has_dependents({ a }, a) == false)
+
+    -- defensive: nil inputs and an empty project
+    check('deps: nil sheets -> free', Bruteforce.has_dependents(nil, a) == false)
+    check('deps: nil sheet -> free', Bruteforce.has_dependents(all, nil) == false)
+    check('deps: empty project -> free', Bruteforce.has_dependents({}, a) == false)
+
+    -- a malformed base cycle (hand-edited project) must terminate, not hang the emulator
+    local x = { name = 'x' }
+    local y = { name = 'y', _base_sheet = x }
+    x._base_sheet = y
+    local z = { name = 'z' }
+    check('deps: base cycle terminates and reports no dependency on an outsider',
+        Bruteforce.has_dependents({ x, y }, z) == false)
+    check('deps: base cycle still finds a real dependent', Bruteforce.has_dependents({ x, y }, x) == true)
 end
 
 print(string.format('bruteforce_test: %d passed, %d failed', passed, failed))
